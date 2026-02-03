@@ -512,7 +512,7 @@ def auth_block():
             st.sidebar.error("Невірний логін або пароль")
             return None
 
-        st.session_state["user"] = user | {"login": login}
+        st.session_state["user"] = {"login": login, **dict(user)}
         st.sidebar.success(f"Вітаю, {user['name']}!")
         return st.session_state["user"]
 
