@@ -522,7 +522,7 @@ def auth_block():
 # ======================================================
 # UI
 # ======================================================
-st.title("📊 Звіт менеджера: прогрес по воронці (день + база)")
+st.title("📊 Звіт менеджера:")
 
 user = auth_block()
 if not user:
@@ -538,13 +538,13 @@ with cols[0]:
 with cols[1]:
     target_day = st.date_input("Дата звіту", value=date.today())
 with cols[2]:
-    st.caption("Звіт рахує лише реальні зміни статусів (stagehistory). База — тільки після паузи > 30 днів.")
+    st.caption("Звіт рахує лише реальні зміни статусів. База — тільки після паузи > 30 днів.")
 
-if st.button("🔎 Отримати інформацію", type="primary"):
+if st.button("🔎 Сформувати звіт", type="primary"):
     with st.spinner("Формую звіт..."):
         total_day, total_base, rows, meta = build_report(manager_id, target_day)
 
-    st.subheader("✅ Підсумок за день (без бази)")
+    st.subheader("✅ Підсумок за день:")
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Взято", total_day["Взято"])
     c2.metric("Дозвон", total_day["Дозвон"])
@@ -561,7 +561,7 @@ if st.button("🔎 Отримати інформацію", type="primary"):
     b5.metric("Запис", total_base["Запис"])
 
     st.divider()
-    st.subheader("🧾 Деталізація (зрозумілий debug)")
+    st.subheader("🧾 Деталізація по угодам")
     st.caption("Формат: Угода № | Номер телефона | Назва картки | Причина (якщо не пораховано) | Якщо пораховано — куди")
 
     # Table
@@ -581,12 +581,3 @@ if st.button("🔎 Отримати інформацію", type="primary"):
         file_name=f"report_{manager_name}_{target_day.isoformat()}.csv",
         mime="text/csv",
     )
-
-    st.divider()
-    st.subheader("ℹ️ Службові цифри")
-    st.write({
-        "Угод з DATE_MODIFY у цю дату": meta["deals_modified"],
-        "Ігноровано (без реальної зміни статусу)": meta["ignored_no_real_stage_change"],
-        "Пропущено (немає прогресу)": meta["skipped_total"],
-        "Причини пропусків": meta["skipped_reasons"],
-    })
