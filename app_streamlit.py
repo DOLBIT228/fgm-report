@@ -562,7 +562,6 @@ if st.button("🔎 Сформувати звіт", type="primary"):
 
     st.divider()
     st.subheader("🧾 Деталізація по угодам")
-    st.caption("Формат: Угода № | Номер телефона | Назва картки | Причина (якщо не пораховано) | Якщо пораховано — куди")
 
     # Table
     st.dataframe(rows, use_container_width=True)
