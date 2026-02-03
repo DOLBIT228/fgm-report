@@ -2,6 +2,8 @@
 
 import hashlib
 import requests
+import re
+import unicodedata
 import streamlit as st
 from datetime import datetime, date, timedelta
 from collections import Counter, defaultdict
@@ -58,8 +60,39 @@ BASE_INACTIVITY_DAYS = 30
 # Поле "Термін"
 TERM_FIELD = "UF_CRM_1749123119"
 
-# Значення терміну, які відносяться до "Майбутнє" всередині Інстаграм
-TERM_TO_FUTURE = {"Завчасно", "Без терміну", "На майбутнє"}
+# Значення терміну, які = "Майбутнє" (нормалізовані)
+TERM_TO_FUTURE_RAW = {"Завчасно", "Без терміну", "На майбутнє"}
+
+def _extract_text(v):
+    """Bitrix може віддавати term як str / list / dict."""
+    if v is None:
+        return ""
+    if isinstance(v, str):
+        return v
+    if isinstance(v, list) and v:
+        # беремо перший елемент
+        return _extract_text(v[0])
+    if isinstance(v, dict):
+        # найчастіші варіанти
+        return str(v.get("VALUE") or v.get("value") or v.get("NAME") or v.get("name") or "")
+    return str(v)
+
+def _norm_term(v: str) -> str:
+    """Прибираємо NBSP, зайві пробіли, нормалізуємо unicode, робимо нижній регістр."""
+    s = _extract_text(v)
+    # unicode normalize
+    s = unicodedata.normalize("NFKC", s)
+    # NBSP -> space
+    s = s.replace("\u00A0", " ").replace("\u202F", " ")
+    # collapse spaces
+    s = re.sub(r"\s+", " ", s).strip()
+    return s.casefold()
+
+TERM_TO_FUTURE = {_norm_term(x) for x in TERM_TO_FUTURE_RAW}
+
+def instagram_time_segment(term_value) -> str:
+    term_norm = _norm_term(term_value)
+    return "Майбутнє" if term_norm in TERM_TO_FUTURE else "Ближчий час"
 
 
 # ======================================================
@@ -883,5 +916,8 @@ if st.button("🔎 Сформувати звіт", type="primary"):
         "⬇️ Завантажити CSV",
         data=buf.getvalue().encode("utf-8"),
         file_name=f"report_{manager_name}_{target_day.isoformat()}.csv",
-        mime="text/csv",
-    )
+        mime="text/csv")
+
+    st.subheader("🧪 Debug: унікальні значення поля 'Термін' (для Інстаграм)")
+    terms = sorted({(r.get("Термін") or "") for r in rows if r.get("Категорія") == "Інстаграм"})
+    st.write(terms)
