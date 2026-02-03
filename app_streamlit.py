@@ -541,7 +541,7 @@ with cols[2]:
     st.caption("Звіт рахує лише реальні зміни статусів. База — тільки після паузи > 30 днів.")
 
 if st.button("🔎 Сформувати звіт", type="primary"):
-    with st.spinner("Формую звіт..."):
+    with st.spinner("Формую звіт... (орієнтовно 40 секунд)"):
         total_day, total_base, rows, meta = build_report(manager_id, target_day)
 
     st.subheader("✅ Підсумок за день:")
