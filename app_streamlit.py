@@ -600,7 +600,23 @@ def build_report(manager_id: int, target_day: date):
         "skipped_reasons": dict(skipped),
     }
 
-    return total_day, total_base, day_by_bucket, base_by_bucket, day_by_segment_bucket, rows, meta
+        # --- FIX: make cache-picklable (no defaultdict / lambda) ---
+    day_by_bucket_out = {k: dict(v) for k, v in day_by_bucket.items()}
+    base_by_bucket_out = {k: dict(v) for k, v in base_by_bucket.items()}
+
+    day_by_segment_bucket_out = {}
+    for seg, by_b in day_by_segment_bucket.items():
+        day_by_segment_bucket_out[seg] = {b: dict(cnts) for b, cnts in by_b.items()}
+
+    return (
+        total_day,
+        total_base,
+        day_by_bucket_out,
+        base_by_bucket_out,
+        day_by_segment_bucket_out,
+        rows,
+        meta,
+    )
 
 
 # ======================================================
