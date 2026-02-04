@@ -1,15 +1,12 @@
-# app_streamlit.py
-
 import hashlib
 import requests
-import re
-import unicodedata
 import streamlit as st
 from datetime import datetime, date, timedelta
 from collections import Counter, defaultdict
+import unicodedata
 
 try:
-    from zoneinfo import ZoneInfo
+    from zoneinfo import ZoneInfo  # Python 3.9+
 except Exception:
     ZoneInfo = None
 
@@ -37,6 +34,7 @@ if not WEBHOOK_URL:
     st.error("Не задано WEBHOOK_URL у secrets. Додайте його в Streamlit secrets.")
     st.stop()
 
+# users: dict login -> {name, manager_id, password_sha256}
 USERS = get_secret("USERS", {})
 if not USERS:
     st.error("Не задано USERS у secrets (логіни/паролі/ID менеджерів).")
@@ -44,8 +42,19 @@ if not USERS:
 
 
 # ======================================================
-# CONSTANTS
+# MANAGERS (fixed list)
 # ======================================================
+MANAGERS = {
+    "Наталія Ледвій": 28217,
+    "Анна Звада": 28267,
+    "Марія Маськовіта": 28307,
+    "Марія Деревецька": 28427,
+    "Карина Хопта": 28423,
+    "Олена Рудзік": 28279,
+    "Катерина Романова": 28421,
+}
+
+# Категорії
 CAT_CRM_FGM = 59
 CAT_ONLINE = 61
 CAT_OFFLINE = 63
@@ -57,42 +66,14 @@ APPOINTMENT_CATEGORIES = {CAT_ONLINE, CAT_OFFLINE, CAT_CHAT_SALES, CAT_VG}
 
 BASE_INACTIVITY_DAYS = 30
 
-# Поле "Термін"
-TERM_FIELD = "UF_CRM_1749123119"
+TERM_FIELD = "UF_CRM_1749123119"  # поле "Термін" (list)
 
-# Значення терміну, які = "Майбутнє" (нормалізовані)
-TERM_TO_FUTURE_RAW = {"Завчасно", "Без терміну", "На майбутнє"}
+# Значення поля "Термін" (текст), які відносимо до "Майбутнє".
+# Якщо термін НЕ "Ближчим часом" -> вважаємо "Майбутнє".
+TERM_FUTURE_VALUES = {"Завчасно", "Без терміну", "На майбутнє"}
 
-def _extract_text(v):
-    """Bitrix може віддавати term як str / list / dict."""
-    if v is None:
-        return ""
-    if isinstance(v, str):
-        return v
-    if isinstance(v, list) and v:
-        # беремо перший елемент
-        return _extract_text(v[0])
-    if isinstance(v, dict):
-        # найчастіші варіанти
-        return str(v.get("VALUE") or v.get("value") or v.get("NAME") or v.get("name") or "")
-    return str(v)
-
-def _norm_term(v: str) -> str:
-    """Прибираємо NBSP, зайві пробіли, нормалізуємо unicode, робимо нижній регістр."""
-    s = _extract_text(v)
-    # unicode normalize
-    s = unicodedata.normalize("NFKC", s)
-    # NBSP -> space
-    s = s.replace("\u00A0", " ").replace("\u202F", " ")
-    # collapse spaces
-    s = re.sub(r"\s+", " ", s).strip()
-    return s.casefold()
-
-TERM_TO_FUTURE = {_norm_term(x) for x in TERM_TO_FUTURE_RAW}
-
-def instagram_time_segment(term_value) -> str:
-    term_norm = _norm_term(term_value)
-    return "Майбутнє" if term_norm in TERM_TO_FUTURE else "Ближчий час"
+def _norm_text(s: str) -> str:
+    return (s or "").strip().casefold()
 
 
 # ======================================================
@@ -112,47 +93,54 @@ def add_levels(counter: dict, levels: set[int]):
 
 
 # ======================================================
-# STAGE MAPS (FGM 59)
+# STAGE MAPS
 # ======================================================
 CRM_STAGE_TO_LEVEL = {
+    # Початкові (не рахуємо)
     "C59:UC_DN9449": 0,
     "C59:UC_IJZE1R": 0,
 
+    # 1) Взято
     "C59:NEW": 1,
     "C59:EXECUTING": 1,
     "C59:UC_25G325": 1,
     "C59:UC_G1DKQI": 1,
     "C59:UC_2118IT": 1,
 
+    # 2) Дозвон (успішний контакт)
     "C59:UC_XO1ZPS": 2,
     "C59:FINAL_INVOICE": 2,
 
+    # 3) ЦА
     "C59:UC_XJ1V70": 3,
 
+    # 4) Зацікавлені
     "C59:UC_FDDLVQ": 4,
     "C59:1": 4,
     "C59:UC_PL0BXK": 4,
     "C59:UC_L3UWWD": 4,
     "C59:UC_MBXOE8": 4,
 
+    # 5) Запис
     "C59:2": 5,
 }
 
+# Неуспішні статуси (ваша логіка)
 UNSUCCESSFUL_IGNORE = {
-    "C59:UC_QA06H6",
-    "C59:WON",
-    "C59:UC_A7YB3V",
-    "C59:15",
+    "C59:UC_QA06H6",  # Консультація не відбулася - нікуди
+    "C59:WON",        # Успішна угода - нікуди
+    "C59:UC_A7YB3V",  # Подвійні - нікуди
+    "C59:15",         # Зустріч не відбулась - нікуди
 }
 UNSUCCESSFUL_AS_TAKEN = {
-    "C59:LOSE",
+    "C59:LOSE",       # Недозвон - як Взято
 }
 UNSUCCESSFUL_AS_CALL = {
-    "C59:APOLOGY",
-    "C59:14",
-    "C59:16",
-    "C59:17",
-    "C59:18",
+    "C59:APOLOGY",    # Просто переглянути - як Дозвон
+    "C59:14",         # Не ЦА - як Дозвон
+    "C59:16",         # Дорого - як Дозвон
+    "C59:17",         # Вже купили - як Дозвон
+    "C59:18",         # Бояться замовляти дистанційно - як Дозвон
 }
 
 
@@ -173,8 +161,9 @@ def level_from_stage(category_id: int, stage_id: str) -> int:
 
 
 # ======================================================
-# SOURCE MAP (SOURCE_ID -> Human name)
+# SOURCES (ID -> human)
 # ======================================================
+# Це ваша мапа довідника SOURCE (ENTITY_ID=SOURCE).
 SOURCE_ID_TO_NAME = {
     "CALL": "Хочу каталог обручок",
     "WEBFORM": "Хочу каталог каблучок",
@@ -184,12 +173,12 @@ SOURCE_ID_TO_NAME = {
     "2|FACEBOOK": "Консультація каблучки",
     "12|TELEGRAM": "Платина каблучки",
     "UC_75HTWO": "Даймонд Обручки",
-    "BOOKING": "Booking",
     "UC_SBD46Q": "Даймонд Каблучки",
     "REPEAT_SALE": "Даймонд",
     "17": "Даймонд платина",
     "18": "Сертифікат каблучки",
     "19": "Сертифікат 1 грам обручки",
+    "20": "База інстаграм",
     "22": "Класичний каталог",
     "UC_1HZ0KB": "Каталог 375",
     "23": "Конструктор",
@@ -227,40 +216,9 @@ SOURCE_ID_TO_NAME = {
     "UC_H0FXZX": "Вікторія Гарденс",
     "UC_Q55M4S": "Платина Обручки",
     "UC_4ES7KL": "ТікТок",
-    "UC_27P86X": "Квіз обручки",
     "UC_DHJKYW": "5 Діамант в подарунок інст",
-    "UC_JL9RSA": "Лендинг -2=1",
-    "UC_9FJEWZ": "Лендинг 1 грам",
-    "UC_WEFXCG": "Лендинг Каблучки 100$",
-    "34": "Лендинг Каблучки 1 грам",
-    "35": "Лендинг 2 за 1 ОФФЕР",
-    "UC_61JD9N": "Лендинг - стара ціна 2025",
-    "UC_UM9TLI": "Телеграм ширина ЧП 2025",
-    "UC_WC44MV": "Телеграм діаманат ЧП 2025",
-    "UC_ZCTGEP": "Телеграм платина ЧП 2025",
-    "UC_MW9CGP": "Телеграм 2=1 ЧП 2025",
-    "UC_CP8H2V": "Телеграм розтермінування ЧП 2025",
-    "UC_J51RMG": "Телеграм 1 грам",
-    "UC_BCCISU": "5 Діаман в подарунок ТГ",
-    "19|TELEGRAM380738782291": "Telegram: 380738782291",
-    "8|FBINSTAGRAMDIRECT": "Instagram Direct",
-    "13|CONNECTOR380990922524": "Viber: 380990922524",
-    "20": "База інстаграм",
 }
 
-
-def source_name_from_id(source_id: str) -> str:
-    if not source_id:
-        return ""
-    sid = str(source_id)
-    return SOURCE_ID_TO_NAME.get(sid, sid)
-
-
-# ======================================================
-# YOUR CATEGORIZATION RULES
-# ======================================================
-
-# 1) Категорія "Інстаграм": САМЕ перелік назв джерел, який Ви дали
 INSTAGRAM_SOURCE_NAMES = {
     "Хочу каталог обручок",
     "Хочу каталог каблучок",
@@ -308,86 +266,88 @@ INSTAGRAM_SOURCE_NAMES = {
     "5 Діамант в подарунок інст",
 }
 
-CERT_NAMES = {"Сертифікат каблучки", "Сертифікат 1 грам обручки", "1 грам золота"}
-CONSTRUCTOR_NAME = "Конструктор"
-CHATBOT_NAME = "Чат-бот"
-LEADGEN_NAME = "Квіз обручки"
+LANDING_SOURCE_NAMES = {
+    "Лендинг -2=1",
+    "Лендинг 1 грам",
+    "Лендинг Каблучки 100$",
+    "Лендинг Каблучки 1 грам",
+    "Лендинг 2 за 1 ОФФЕР",
+    "Лендинг - стара ціна 2025",
+}
+
+TELEGRAM_SOURCE_NAMES = {
+    "Телеграм канал",
+    "Телеграм ширина ЧП 2025",
+    "Телеграм діаманат ЧП 2025",
+    "Телеграм платина ЧП 2025",
+    "Телеграм 2=1 ЧП 2025",
+    "Телеграм розтермінування ЧП 2025",
+    "Телеграм 1 грам",
+    "5 Діаман в подарунок ТГ",
+}
+
+CERT_SOURCE_NAMES = {
+    "Сертифікат каблучки",
+    "Сертифікат 1 грам обручки",
+    "1 грам золота",
+}
+
+def source_name_from_id(source_id: str) -> str:
+    return SOURCE_ID_TO_NAME.get(str(source_id or "").strip(), "")
+
+def source_display(source_id: str) -> str:
+    sid = str(source_id or "").strip()
+    if not sid:
+        return ""
+    return source_name_from_id(sid) or sid
 
 
-def is_landing_name(name: str) -> bool:
-    return bool(name) and name.startswith("Лендинг")
+def instagram_time_segment(term_text: str) -> str:
+    """Для Інстаграм: "Ближчий час" лише коли термін = "Ближчим часом", інакше "Майбутнє"."""
+    t = _norm_text(term_text)
+    return 'Ближчий час' if t == _norm_text('Ближчим часом') else 'Майбутнє'
 
 
-def is_telegram_name(name: str, source_id: str) -> bool:
-    nm = name or ""
-    sid = (source_id or "").upper()
-    return ("Телеграм" in nm) or ("TELEGRAM" in sid)
-
-
-def instagram_time_segment(term_value: str) -> str:
-    term = (term_value or "").strip()
-    return "Майбутнє" if term in TERM_TO_FUTURE else "Ближчий час"
-
-
-def bucket_from_source(source_id: str, term_value: str, is_base: bool) -> str:
-    """
-    1) Якщо is_base -> "База"
-    2) Якщо джерело входить у перелік Інстаграм -> "Інстаграм"
-       (а підрозбивка робиться окремим полем Segment)
-    3) Інакше: Конструктор / Сертифікат / Сайт (SOURCE_ID=24) / Лендинги / Чат-бот / Лідоген / Телеграм / Інше
-    """
+def bucket_from_source(source_id: str, term_text: str, is_base: bool) -> str:
+    """Повертає верхній bucket для угоди."""
     if is_base:
         return "База"
 
-    sid = str(source_id or "")
-    sname = source_name_from_id(sid)
+    sname = source_name_from_id(str(source_id or ""))
 
     if sname in INSTAGRAM_SOURCE_NAMES:
         return "Інстаграм"
-
-    if sname == CONSTRUCTOR_NAME or sid == "23":
+    if sname == "Конструктор":
         return "Конструктор"
-
-    if sname in CERT_NAMES:
+    if sname in CERT_SOURCE_NAMES:
         return "Сертифікат"
-
-    # ВАЖЛИВО: SOURCE_ID=24 ("Лендинг") у вас = основний сайт
-    if sid == "24":
-        return "Сайт"
-
-    if is_landing_name(sname):
-        return "Лендинги"
-
-    if sname == CHATBOT_NAME:
+    if sname in LANDING_SOURCE_NAMES:
+        return "Лендинг"
+    if sname == "Чат-бот":
         return "Чат-бот"
-
-    if sname == LEADGEN_NAME:
+    if sname == "Лендинг":  # основний сайт у вас теж приходить як "Лендинг"
+        return "Сайт"
+    if sname == "Квіз обручки":
         return "Лідогенерація"
-
-    if is_telegram_name(sname, sid):
+    if sname in TELEGRAM_SOURCE_NAMES:
         return "Телеграм"
 
     return "Інше"
 
 
-def segment_for_bucket(bucket: str, source_id: str, term_value: str) -> str:
+def segment_for_bucket(bucket: str, source_id: str, term_text: str) -> str:
     """
     Segment:
-      - Для Інстаграм -> "Ближчий час" / "Майбутнє" (з поля Термін)
-      - Для інших -> назва джерела (людська)
+      - Для "Інстаграм" -> "Ближчий час" / "Майбутнє" (з текстового значення поля Термін)
+      - Для інших bucket -> назва джерела (людська)
     """
-    sid = str(source_id or "")
+    sid = str(source_id or '')
     sname = source_name_from_id(sid)
 
-    if bucket == "Інстаграм":
-        return instagram_time_segment(term_value)
+    if bucket == 'Інстаграм':
+        return instagram_time_segment(term_text)
 
-    return sname if sname else "Без джерела"
-
-
-def source_display(source_id: str) -> str:
-    sid = str(source_id or "")
-    return source_name_from_id(sid) if sid else ""
+    return sname if sname else 'Без джерела'
 
 
 # ======================================================
@@ -401,6 +361,50 @@ def b24_get(method: str, params=None) -> dict:
     if "error" in data:
         raise RuntimeError(f"{data['error']}: {data.get('error_description')}")
     return data
+
+
+# ======================================================
+# USERFIELD ENUMS (for "Термін")
+# ======================================================
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_deal_userfield_enum_map(field_name: str) -> dict:
+    """Повертає мапу {ENUM_ID(str): VALUE(str)} для deal userfield (list)."""
+    params = {"filter[FIELD_NAME]": field_name}
+    data = b24_get("crm.deal.userfield.list", params)
+    res = data.get("result", [])
+    if isinstance(res, dict):
+        res = [res]
+    if not isinstance(res, list) or not res:
+        return {}
+
+    field = res[0] if isinstance(res[0], dict) else {}
+    enum_list = field.get("LIST") or field.get("list") or []
+    out = {}
+    if isinstance(enum_list, list):
+        for it in enum_list:
+            if not isinstance(it, dict):
+                continue
+            eid = str(it.get("ID") or "").strip()
+            val = str(it.get("VALUE") or "").strip()
+            if eid:
+                out[eid] = val
+    return out
+
+
+def term_text_from_raw(raw, enum_map: dict) -> str:
+    """raw може бути ID (str/int), або list, або вже текст. Повертає текст."""
+    if raw is None:
+        return ""
+    if isinstance(raw, list) and raw:
+        raw = raw[0]
+    if isinstance(raw, dict):
+        raw = raw.get("VALUE") or raw.get("value") or ""
+    s = str(raw).strip()
+    if not s:
+        return ""
+    if s in enum_map:
+        return enum_map[s]
+    return s
 
 
 def parse_dt(value: str):
@@ -435,10 +439,7 @@ def fetch_all_deals(manager_id: int):
     params = {
         "filter[ASSIGNED_BY_ID]": manager_id,
         "filter[CATEGORY_ID][]": CATEGORIES,
-        "select[]": [
-            "ID", "TITLE", "STAGE_ID", "CATEGORY_ID", "DATE_MODIFY",
-            "CONTACT_ID", "SOURCE_ID", TERM_FIELD
-        ],
+        "select[]": ["ID", "TITLE", "STAGE_ID", "CATEGORY_ID", "DATE_MODIFY", "CONTACT_ID", "SOURCE_ID", TERM_FIELD],
         "start": 0
     }
 
@@ -509,7 +510,7 @@ def fetch_contacts_phones(contact_ids: list[int]) -> dict[int, str]:
     phones = {}
     chunk_size = 50
     for i in range(0, len(contact_ids), chunk_size):
-        chunk = contact_ids[i:i + chunk_size]
+        chunk = contact_ids[i:i+chunk_size]
         params = {
             "filter[ID][]": chunk,
             "select[]": ["ID", "PHONE"],
@@ -529,7 +530,7 @@ def fetch_contacts_phones(contact_ids: list[int]) -> dict[int, str]:
 
 
 # ======================================================
-# HISTORY ANALYSIS
+# HISTORY ANALYSIS (only real stage change)
 # ======================================================
 def last_stage_key_before_day(history_rows, target_day: date):
     last_dt = None
@@ -649,6 +650,16 @@ def levels_for_base_report(history_rows, target_day: date):
 # ======================================================
 # REPORT (cached)
 # ======================================================
+def dd_counts_to_dict(dd):
+    return {k: dict(v) for k, v in dd.items()}
+
+def dd2_to_dict(dd2):
+    out = {}
+    for k, inner in dd2.items():
+        out[k] = {kk: dict(vv) for kk, vv in inner.items()}
+    return out
+
+
 @st.cache_data(ttl=60, show_spinner=False)
 def build_report(manager_id: int, target_day: date):
     all_deals = fetch_all_deals(manager_id)
@@ -661,19 +672,21 @@ def build_report(manager_id: int, target_day: date):
             contact_ids.append(int(cid))
     phones_map = fetch_contacts_phones(contact_ids)
 
+    # ENUM map for 'Термін' (щоб з UF_* (ID) отримати текст)
+    term_enum_map = fetch_deal_userfield_enum_map(TERM_FIELD)
+
     total_day = empty_counts()
     total_base = empty_counts()
 
-    # bucket -> counts
     day_by_bucket = defaultdict(empty_counts)
     base_by_bucket = defaultdict(empty_counts)
 
-    # bucket -> segment -> counts
     day_by_bucket_segment = defaultdict(lambda: defaultdict(empty_counts))
     base_by_bucket_segment = defaultdict(lambda: defaultdict(empty_counts))
 
     ignored_no_real_stage_change = 0
     skipped = Counter()
+
     rows = []
 
     for d in deals_day:
@@ -681,12 +694,14 @@ def build_report(manager_id: int, target_day: date):
         title = d.get("TITLE", "—")
         cat_now = int(d.get("CATEGORY_ID", -1))
         stage_now = d.get("STAGE_ID", "")
+
         contact_id = int(d.get("CONTACT_ID") or 0)
         phone = phones_map.get(contact_id, "")
 
-        source_id = str(d.get("SOURCE_ID") or "")
+        source_id = str(d.get('SOURCE_ID') or '')
         source_name = source_display(source_id)
-        term_val = d.get(TERM_FIELD, "")
+        term_raw = d.get(TERM_FIELD, '')
+        term_text = term_text_from_raw(term_raw, term_enum_map)
 
         history = fetch_stagehistory(deal_id)
 
@@ -695,10 +710,10 @@ def build_report(manager_id: int, target_day: date):
             continue
 
         base_levels, base_reason, last_before_date, _ = levels_for_base_report(history, target_day)
-        is_base = (base_reason == "BASE_OK" and bool(base_levels))
+        is_base = (base_reason == 'BASE_OK' and bool(base_levels))
 
-        bucket = bucket_from_source(source_id, term_val, is_base)
-        segment = segment_for_bucket(bucket, source_id, term_val)
+        bucket = bucket_from_source(source_id, term_text, is_base)
+        segment = segment_for_bucket(bucket, source_id, term_text)
 
         if is_base:
             add_levels(total_base, base_levels)
@@ -715,7 +730,7 @@ def build_report(manager_id: int, target_day: date):
                 "Поточний статус": f"{cat_now}:{stage_now}",
                 "Джерело (ID)": source_id,
                 "Джерело": source_name,
-                "Термін": term_val,
+                "Термін": term_text,
                 "Категорія": bucket,
                 "Підкатегорія": segment,
                 "Результат": counted_to,
@@ -723,13 +738,12 @@ def build_report(manager_id: int, target_day: date):
             })
             continue
 
-        day_levels, day_reason, _, _ = levels_gained_on_day(history, target_day)
+        day_levels, day_reason, before, today_lvl = levels_gained_on_day(history, target_day)
 
         if day_levels:
             add_levels(total_day, day_levels)
             add_levels(day_by_bucket[bucket], day_levels)
             add_levels(day_by_bucket_segment[bucket][segment], day_levels)
-
             counted_to = "ДЕНЬ: " + ", ".join(LEVEL_NAMES[l] for l in sorted(day_levels))
             reason_text = ""
         else:
@@ -744,7 +758,7 @@ def build_report(manager_id: int, target_day: date):
             "Поточний статус": f"{cat_now}:{stage_now}",
             "Джерело (ID)": source_id,
             "Джерело": source_name,
-            "Термін": term_val,
+            "Термін": term_text,
             "Категорія": bucket,
             "Підкатегорія": segment,
             "Результат": counted_to,
@@ -753,42 +767,27 @@ def build_report(manager_id: int, target_day: date):
 
     meta = {
         "deals_modified": len(deals_day),
-        "ignored_no_real_stage_change": int(ignored_no_real_stage_change),
+        "ignored_no_real_stage_change": ignored_no_real_stage_change,
         "skipped_total": int(sum(skipped.values())),
         "skipped_reasons": dict(skipped),
     }
 
-    # FIX cache pickling: convert defaultdict -> dict
-    def dd_counts_to_dict(dct):
-        return {k: dict(v) for k, v in dct.items()}
-
+    # конвертація defaultdict щоб кеш не ламався
     day_by_bucket_out = dd_counts_to_dict(day_by_bucket)
     base_by_bucket_out = dd_counts_to_dict(base_by_bucket)
+    day_by_segment_out = dd2_to_dict(day_by_bucket_segment)
+    base_by_segment_out = dd2_to_dict(base_by_bucket_segment)
 
-    def dd2_to_dict(d2):
-        out = {}
-        for k, inner in d2.items():
-            out[k] = {kk: dict(vv) for kk, vv in inner.items()}
-        return out
-
-    day_by_bucket_segment_out = dd2_to_dict(day_by_bucket_segment)
-    base_by_bucket_segment_out = dd2_to_dict(base_by_bucket_segment)
-
-    return (
-        total_day,
-        total_base,
-        day_by_bucket_out,
-        base_by_bucket_out,
-        day_by_bucket_segment_out,
-        base_by_bucket_segment_out,
-        rows,
-        meta,
-    )
+    return total_day, total_base, day_by_bucket_out, base_by_bucket_out, day_by_segment_out, base_by_segment_out, rows, meta
 
 
 # ======================================================
 # AUTH
 # ======================================================
+def sha256(s: str) -> str:
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()
+
+
 def auth_block():
     st.sidebar.header("🔐 Вхід")
     login = st.sidebar.text_input("Логін")
@@ -805,7 +804,7 @@ def auth_block():
             return None
 
         st.session_state["user"] = {"login": login, **dict(user)}
-        st.sidebar.success(f"Вітаю, {user.get('name', '')}!")
+        st.sidebar.success(f"Вітаю, {user['name']}!")
         return st.session_state["user"]
 
     return st.session_state.get("user")
@@ -814,7 +813,7 @@ def auth_block():
 # ======================================================
 # UI
 # ======================================================
-st.title("📊 Звіт менеджера")
+st.title("📊 Звіт менеджера:")
 
 user = auth_block()
 if not user:
@@ -834,18 +833,9 @@ with cols[2]:
 
 if st.button("🔎 Сформувати звіт", type="primary"):
     with st.spinner("Формую звіт..."):
-        (
-            total_day,
-            total_base,
-            day_by_bucket,
-            base_by_bucket,
-            day_by_bucket_segment,
-            base_by_bucket_segment,
-            rows,
-            meta
-        ) = build_report(manager_id, target_day)
+        total_day, total_base, day_by_bucket, base_by_bucket, day_by_segment, base_by_segment, rows, meta = build_report(manager_id, target_day)
 
-    st.subheader("✅ Підсумок за день")
+    st.subheader("✅ Підсумок за день:")
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Взято", total_day["Взято"])
     c2.metric("Дозвон", total_day["Дозвон"])
@@ -862,44 +852,9 @@ if st.button("🔎 Сформувати звіт", type="primary"):
     b5.metric("Запис", total_base["Запис"])
 
     st.divider()
-    st.subheader("🧩 Категорії (ДЕНЬ)")
-    day_bucket_rows = [{"Категорія": k, **v} for k, v in sorted(day_by_bucket.items(), key=lambda x: x[0])]
-    st.dataframe(day_bucket_rows, use_container_width=True)
+    st.subheader("🧾 Деталізація по угодам")
+    st.dataframe(rows, use_container_width=True)
 
-    st.subheader("🧩 Категорії (БАЗА)")
-    base_bucket_rows = [{"Категорія": k, **v} for k, v in sorted(base_by_bucket.items(), key=lambda x: x[0])]
-    st.dataframe(base_bucket_rows, use_container_width=True)
-
-    st.divider()
-    st.subheader("🔎 Підкатегорії всередині категорій (ДЕНЬ)")
-    day_seg_rows = []
-    for cat, seg_map in day_by_bucket_segment.items():
-        for seg, cnts in seg_map.items():
-            day_seg_rows.append({"Категорія": cat, "Підкатегорія": seg, **cnts})
-    day_seg_rows = sorted(day_seg_rows, key=lambda r: (r["Категорія"], r["Підкатегорія"]))
-    st.dataframe(day_seg_rows, use_container_width=True, height=320)
-
-    st.subheader("🔎 Підкатегорії всередині категорій (БАЗА)")
-    base_seg_rows = []
-    for cat, seg_map in base_by_bucket_segment.items():
-        for seg, cnts in seg_map.items():
-            base_seg_rows.append({"Категорія": cat, "Підкатегорія": seg, **cnts})
-    base_seg_rows = sorted(base_seg_rows, key=lambda r: (r["Категорія"], r["Підкатегорія"]))
-    st.dataframe(base_seg_rows, use_container_width=True, height=320)
-
-    st.divider()
-    st.subheader("🧾 Деталізація по угодах")
-    st.caption(
-        f"Modified today: {meta['deals_modified']} | "
-        f"Ignored (no real stage change): {meta['ignored_no_real_stage_change']} | "
-        f"Skipped: {meta['skipped_total']}"
-    )
-    if meta.get("skipped_reasons"):
-        st.write("Причини пропусків:", meta["skipped_reasons"])
-
-    st.dataframe(rows, use_container_width=True, height=520)
-
-    # CSV export
     import csv, io
     buf = io.StringIO()
     fieldnames = [
@@ -916,8 +871,5 @@ if st.button("🔎 Сформувати звіт", type="primary"):
         "⬇️ Завантажити CSV",
         data=buf.getvalue().encode("utf-8"),
         file_name=f"report_{manager_name}_{target_day.isoformat()}.csv",
-        mime="text/csv")
-
-    st.subheader("🧪 Debug: унікальні значення поля 'Термін' (для Інстаграм)")
-    terms = sorted({(r.get("Термін") or "") for r in rows if r.get("Категорія") == "Інстаграм"})
-    st.write(terms)
+        mime="text/csv",
+    )
