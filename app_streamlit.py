@@ -894,17 +894,6 @@ st.dataframe(counts_dict_to_rows(base_by_bucket, "Категорія"), use_cont
 st.divider()
 
 # --------------------------------------------------
-# INSTAGRAM TERM BREAKDOWN
-# --------------------------------------------------
-st.subheader("📷 Інстаграм — розбивка за термінами (День)")
-st.dataframe(counts_dict_to_rows(day_instagram_by_term, "Термін сегмент"), use_container_width=True)
-
-st.subheader("📷 Інстаграм — розбивка за термінами (База)")
-st.dataframe(counts_dict_to_rows(base_instagram_by_term, "Термін сегмент"), use_container_width=True)
-
-st.divider()
-
-# --------------------------------------------------
 # SOURCES INSIDE BUCKETS (select works without losing report)
 # --------------------------------------------------
 st.subheader("🧩 Деталізація по джерелах всередині категорій")
