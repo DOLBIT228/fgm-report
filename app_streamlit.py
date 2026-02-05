@@ -137,6 +137,7 @@ CRM_STAGE_TO_LEVEL = {
     "C59:UC_PL0BXK": 4,
     "C59:UC_L3UWWD": 4,
     "C59:UC_MBXOE8": 4,
+    "C59:UC_1H0IN4": 4,
 
     "C59:2": 5,
 }
