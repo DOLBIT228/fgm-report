@@ -1,6 +1,7 @@
 import hashlib
 import requests
 import streamlit as st
+import time
 from datetime import datetime, date, timedelta
 from collections import Counter, defaultdict
 
@@ -52,7 +53,6 @@ CATEGORIES = [CAT_CRM_FGM, CAT_ONLINE, CAT_OFFLINE, CAT_CHAT_SALES, CAT_VG]
 APPOINTMENT_CATEGORIES = {CAT_ONLINE, CAT_OFFLINE, CAT_CHAT_SALES, CAT_VG}
 
 BASE_INACTIVITY_DAYS = 30
-
 TERM_FIELD = "UF_CRM_1749123119"  # поле "Термін" (list)
 
 
@@ -118,51 +118,37 @@ def add_levels(counter: dict, levels: set[int]):
 # STAGE -> LEVEL
 # ======================================================
 CRM_STAGE_TO_LEVEL = {
-    # Початкові (не рахуємо)
     "C59:UC_DN9449": 0,
     "C59:UC_IJZE1R": 0,
 
-    # 1) Взято
     "C59:NEW": 1,
     "C59:EXECUTING": 1,
     "C59:UC_25G325": 1,
     "C59:UC_G1DKQI": 1,
     "C59:UC_2118IT": 1,
 
-    # 2) Дозвон
     "C59:UC_XO1ZPS": 2,
     "C59:FINAL_INVOICE": 2,
 
-    # 3) ЦА
     "C59:UC_XJ1V70": 3,
 
-    # 4) Зацікавлені
     "C59:UC_FDDLVQ": 4,
     "C59:1": 4,
     "C59:UC_PL0BXK": 4,
     "C59:UC_L3UWWD": 4,
     "C59:UC_MBXOE8": 4,
 
-    # 5) Запис
     "C59:2": 5,
 }
 
 UNSUCCESSFUL_IGNORE = {
-    "C59:UC_QA06H6",  # Консультація не відбулася - нікуди
-    "C59:WON",        # Успішна угода - нікуди
-    "C59:UC_A7YB3V",  # Подвійні - нікуди
-    "C59:15",         # Зустріч не відбулась - нікуди
+    "C59:UC_QA06H6",
+    "C59:WON",
+    "C59:UC_A7YB3V",
+    "C59:15",
 }
-UNSUCCESSFUL_AS_TAKEN = {
-    "C59:LOSE",       # Недозвон - як Взято
-}
-UNSUCCESSFUL_AS_CALL = {
-    "C59:APOLOGY",    # Просто переглянути - як Дозвон
-    "C59:14",         # Не ЦА - як Дозвон
-    "C59:16",         # Дорого - як Дозвон
-    "C59:17",         # Вже купили - як Дозвон
-    "C59:18",         # Бояться замовляти дистанційно - як Дозвон
-}
+UNSUCCESSFUL_AS_TAKEN = {"C59:LOSE"}
+UNSUCCESSFUL_AS_CALL = {"C59:APOLOGY", "C59:14", "C59:16", "C59:17", "C59:18"}
 
 
 def level_from_stage(category_id: int, stage_id: str) -> int:
@@ -252,6 +238,7 @@ SOURCE_ID_TO_NAME = {
     "UC_J51RMG": "Телеграм 1 грам",
 }
 
+# ВАЖЛИВО: Конструктор + Сертифікат тепер теж входять в "Інстаграм" як ДЖЕРЕЛА
 INSTAGRAM_SOURCE_NAMES = {
     "Хочу каталог обручок",
     "Хочу каталог каблучок",
@@ -297,9 +284,8 @@ INSTAGRAM_SOURCE_NAMES = {
     "Платина Обручки",
     "ТікТок",
     "5 Діамант в подарунок інст",
-}
-
-CERT_SOURCE_NAMES = {
+    # ДОДАЛИ:
+    "Конструктор",
     "Сертифікат каблучки",
     "Сертифікат 1 грам обручки",
     "1 грам золота",
@@ -336,15 +322,9 @@ def bucket_from_source(source_id: str, term_text: str, is_base: bool) -> str:
 
     sname = source_name_from_id(source_id)
 
-    # Instagram bucket: по списку джерел, який ви надали
+    # Instagram bucket
     if sname in INSTAGRAM_SOURCE_NAMES:
         return "Інстаграм"
-
-    if sname == "Конструктор":
-        return "Конструктор"
-
-    if sname in CERT_SOURCE_NAMES:
-        return "Сертифікат"
 
     if sname in LANDING_SOURCE_NAMES:
         return "Лендинг"
@@ -352,7 +332,7 @@ def bucket_from_source(source_id: str, term_text: str, is_base: bool) -> str:
     if sname == "Чат-бот":
         return "Чат-бот"
 
-    # Важливо: у вас основний сайт теж приходить як "Лендинг"
+    # Основний сайт теж приходить як "Лендинг" (за вашим поясненням)
     if sname == "Лендинг":
         return "Сайт"
 
@@ -366,7 +346,7 @@ def bucket_from_source(source_id: str, term_text: str, is_base: bool) -> str:
 
 
 def instagram_term_segment(term_text: str) -> str:
-    # "Ближчий час" тільки якщо термін == "Ближчим часом"
+    # "Ближчий час" лише якщо значення == "Ближчим часом"
     return "Ближчий час" if _norm(term_text) == _norm("Ближчим часом") else "Майбутнє"
 
 
@@ -624,7 +604,7 @@ def levels_for_base_report(history_rows, target_day: date):
 
 
 # ======================================================
-# DEFAULTDICT -> DICT (for cache pickle)
+# DEFAULTDICT -> DICT (for session_state safety)
 # ======================================================
 def dd_counts_to_dict(dd):
     return {k: dict(v) for k, v in dd.items()}
@@ -637,24 +617,13 @@ def dd2_counts_to_dict(dd2):
     return out
 
 
-def dd3_counts_to_dict(dd3):
-    out = {}
-    for k, lvl_dd in dd3.items():
-        out[k] = {}
-        for kk, inner in lvl_dd.items():
-            out[k][kk] = {kkk: dict(vvv) for kkk, vvv in inner.items()}
-    return out
-
-
 # ======================================================
-# REPORT
+# REPORT (NO cache here, we store in session_state)
 # ======================================================
-@st.cache_data(ttl=60, show_spinner=False)
 def build_report(manager_id: int, target_day: date):
     all_deals = fetch_all_deals(manager_id)
     deals_day = [d for d in all_deals if is_modified_on(d.get("DATE_MODIFY", ""), target_day)]
 
-    # phones
     contact_ids = []
     for d in deals_day:
         cid = d.get("CONTACT_ID")
@@ -662,25 +631,20 @@ def build_report(manager_id: int, target_day: date):
             contact_ids.append(int(cid))
     phones_map = fetch_contacts_phones(contact_ids)
 
-    # term enum map
     term_enum_map = fetch_deal_userfield_enum_map(TERM_FIELD)
 
     total_day = empty_counts()
     total_base = empty_counts()
 
-    # bucket totals
     day_by_bucket = defaultdict(empty_counts)
     base_by_bucket = defaultdict(empty_counts)
 
-    # bucket -> source_name totals
     day_by_bucket_source = defaultdict(lambda: defaultdict(empty_counts))
     base_by_bucket_source = defaultdict(lambda: defaultdict(empty_counts))
 
-    # Instagram: term split
     day_instagram_by_term = defaultdict(empty_counts)
     base_instagram_by_term = defaultdict(empty_counts)
 
-    # Instagram: term -> source split (deep)
     day_instagram_term_source = defaultdict(lambda: defaultdict(empty_counts))
     base_instagram_term_source = defaultdict(lambda: defaultdict(empty_counts))
 
@@ -704,12 +668,10 @@ def build_report(manager_id: int, target_day: date):
 
         history = fetch_stagehistory(deal_id)
 
-        # only real stage change
         if not has_real_stage_change_on_day(history, target_day):
             ignored_no_real_stage_change += 1
             continue
 
-        # base check
         base_levels, base_reason, last_before_date, _ = levels_for_base_report(history, target_day)
         is_base = (base_reason == "BASE_OK" and bool(base_levels))
 
@@ -740,7 +702,6 @@ def build_report(manager_id: int, target_day: date):
             })
             continue
 
-        # day
         day_levels, day_reason, before, today_lvl = levels_gained_on_day(history, target_day)
         if day_levels:
             add_levels(total_day, day_levels)
@@ -779,7 +740,6 @@ def build_report(manager_id: int, target_day: date):
         "skipped_reasons": dict(skipped),
     }
 
-    # convert for cache pickle
     return (
         total_day,
         total_base,
@@ -799,10 +759,6 @@ def build_report(manager_id: int, target_day: date):
 # ======================================================
 # AUTH
 # ======================================================
-def sha256(s: str) -> str:
-    return hashlib.sha256(s.encode("utf-8")).hexdigest()
-
-
 def auth_block():
     st.sidebar.header("🔐 Вхід")
     login = st.sidebar.text_input("Логін")
@@ -843,7 +799,6 @@ def counts_dict_to_rows(d: dict, label_col: str):
 
 
 def bucket_source_to_rows(d: dict, bucket_name: str):
-    # d: bucket -> source -> counts
     sources = d.get(bucket_name, {}) if isinstance(d, dict) else {}
     return counts_dict_to_rows(sources, "Джерело")
 
@@ -851,7 +806,7 @@ def bucket_source_to_rows(d: dict, bucket_name: str):
 # ======================================================
 # UI
 # ======================================================
-st.title("📊 Звіт менеджера:")
+st.title("📊 Звіт менеджера")
 
 user = auth_block()
 if not user:
@@ -861,7 +816,7 @@ if not user:
 manager_id = int(user["manager_id"])
 manager_name = user.get("name", "Менеджер")
 
-cols = st.columns([2, 2, 3])
+cols = st.columns([2, 2, 4])
 with cols[0]:
     st.metric("Менеджер", manager_name)
 with cols[1]:
@@ -869,118 +824,162 @@ with cols[1]:
 with cols[2]:
     st.caption("Звіт рахує лише реальні зміни статусів. База — тільки після паузи > 30 днів.")
 
+# Ключ збереження звіту
+report_key = f"{manager_id}:{target_day.isoformat()}"
+
+# Кнопка формування
 if st.button("🔎 Сформувати звіт", type="primary"):
+    t0 = time.time()
     with st.spinner("Формую звіт..."):
-        (
-            total_day,
-            total_base,
-            day_by_bucket,
-            base_by_bucket,
-            day_by_bucket_source,
-            base_by_bucket_source,
-            day_instagram_by_term,
-            base_instagram_by_term,
-            day_instagram_term_source,
-            base_instagram_term_source,
-            rows,
-            meta
-        ) = build_report(manager_id, target_day)
+        report = build_report(manager_id, target_day)
+    elapsed = time.time() - t0
+    st.session_state["report"] = report
+    st.session_state["report_key"] = report_key
+    st.session_state["report_elapsed"] = elapsed
 
-    # --------------------------------------------------
-    # TOP TOTALS
-    # --------------------------------------------------
-    st.subheader("✅ Підсумок за день:")
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Взято", total_day["Взято"])
-    c2.metric("Дозвон", total_day["Дозвон"])
-    c3.metric("ЦА", total_day["ЦА"])
-    c4.metric("Зацікавлені", total_day["Зацікавлені"])
-    c5.metric("Запис", total_day["Запис"])
+# Якщо звіту нема — показати інфо і стоп
+if st.session_state.get("report_key") != report_key or "report" not in st.session_state:
+    st.info("Натисніть «Сформувати звіт», щоб завантажити дані.")
+    st.stop()
 
-    st.subheader(f"🧱 Підсумок БАЗА (пауза > {BASE_INACTIVITY_DAYS} днів)")
-    b1, b2, b3, b4, b5 = st.columns(5)
-    b1.metric("Взято", total_base["Взято"])
-    b2.metric("Дозвон", total_base["Дозвон"])
-    b3.metric("ЦА", total_base["ЦА"])
-    b4.metric("Зацікавлені", total_base["Зацікавлені"])
-    b5.metric("Запис", total_base["Запис"])
+(
+    total_day,
+    total_base,
+    day_by_bucket,
+    base_by_bucket,
+    day_by_bucket_source,
+    base_by_bucket_source,
+    day_instagram_by_term,
+    base_instagram_by_term,
+    day_instagram_term_source,
+    base_instagram_term_source,
+    rows,
+    meta
+) = st.session_state["report"]
 
-    st.divider()
+elapsed = st.session_state.get("report_elapsed")
+if elapsed is not None:
+    st.success(f"✅ Звіт сформовано за {elapsed:.1f} сек")
 
-    # --------------------------------------------------
-    # BUCKET BREAKDOWN
-    # --------------------------------------------------
-    st.subheader("📌 Деталізація за категоріями (bucket) — День")
-    st.dataframe(counts_dict_to_rows(day_by_bucket, "Категорія"), use_container_width=True)
+# --------------------------------------------------
+# TOP TOTALS
+# --------------------------------------------------
+st.subheader("✅ Підсумок за день")
+c1, c2, c3, c4, c5 = st.columns(5)
+c1.metric("Взято", total_day["Взято"])
+c2.metric("Дозвон", total_day["Дозвон"])
+c3.metric("ЦА", total_day["ЦА"])
+c4.metric("Зацікавлені", total_day["Зацікавлені"])
+c5.metric("Запис", total_day["Запис"])
 
-    st.subheader("📌 Деталізація за категоріями (bucket) — База")
-    st.dataframe(counts_dict_to_rows(base_by_bucket, "Категорія"), use_container_width=True)
+st.subheader(f"🧱 Підсумок БАЗА (пауза > {BASE_INACTIVITY_DAYS} днів)")
+b1, b2, b3, b4, b5 = st.columns(5)
+b1.metric("Взято", total_base["Взято"])
+b2.metric("Дозвон", total_base["Дозвон"])
+b3.metric("ЦА", total_base["ЦА"])
+b4.metric("Зацікавлені", total_base["Зацікавлені"])
+b5.metric("Запис", total_base["Запис"])
 
-    st.divider()
+st.divider()
 
-    # --------------------------------------------------
-    # INSTAGRAM TERM BREAKDOWN
-    # --------------------------------------------------
-    st.subheader("📷 Інстаграм — розбивка за термінами (День)")
-    st.dataframe(counts_dict_to_rows(day_instagram_by_term, "Термін сегмент"), use_container_width=True)
+# --------------------------------------------------
+# BUCKET BREAKDOWN
+# --------------------------------------------------
+st.subheader("📌 Деталізація за категоріями (bucket) — День")
+st.dataframe(counts_dict_to_rows(day_by_bucket, "Категорія"), use_container_width=True)
 
-    st.subheader("📷 Інстаграм — розбивка за термінами (База)")
-    st.dataframe(counts_dict_to_rows(base_instagram_by_term, "Термін сегмент"), use_container_width=True)
+st.subheader("📌 Деталізація за категоріями (bucket) — База")
+st.dataframe(counts_dict_to_rows(base_by_bucket, "Категорія"), use_container_width=True)
 
-    st.divider()
+st.divider()
 
-    # --------------------------------------------------
-    # SOURCES INSIDE EACH BUCKET
-    # --------------------------------------------------
-    st.subheader("🧩 Деталізація по джерелах всередині категорій — День")
-    bucket_list = sorted(set(list(day_by_bucket_source.keys()) + list(base_by_bucket_source.keys())))
-    selected_bucket = st.selectbox("Оберіть категорію", bucket_list, index=bucket_list.index("Інстаграм") if "Інстаграм" in bucket_list else 0)
+# --------------------------------------------------
+# INSTAGRAM TERM BREAKDOWN
+# --------------------------------------------------
+st.subheader("📷 Інстаграм — розбивка за термінами (День)")
+st.dataframe(counts_dict_to_rows(day_instagram_by_term, "Термін сегмент"), use_container_width=True)
 
-    st.caption("Таблиця нижче = Взято/Дозвон/ЦА/Зацікавлені/Запис по КОЖНОМУ джерелу в обраній категорії.")
-    st.dataframe(bucket_source_to_rows(day_by_bucket_source, selected_bucket), use_container_width=True)
+st.subheader("📷 Інстаграм — розбивка за термінами (База)")
+st.dataframe(counts_dict_to_rows(base_instagram_by_term, "Термін сегмент"), use_container_width=True)
 
-    st.subheader("🧩 Деталізація по джерелах всередині категорій — База")
-    st.dataframe(bucket_source_to_rows(base_by_bucket_source, selected_bucket), use_container_width=True)
+st.divider()
 
-    st.divider()
+# --------------------------------------------------
+# SOURCES INSIDE BUCKETS (select works without losing report)
+# --------------------------------------------------
+st.subheader("🧩 Деталізація по джерелах всередині категорій")
 
-    # --------------------------------------------------
-    # DEEP: Instagram term -> source
-    # --------------------------------------------------
-    if selected_bucket == "Інстаграм":
-        st.subheader("📷 Інстаграм — Термін → Джерело (День)")
-        term_pick = st.selectbox("Оберіть сегмент Інстаграм", ["Ближчий час", "Майбутнє"], index=0)
-        src_map = day_instagram_term_source.get(term_pick, {})
-        st.dataframe(counts_dict_to_rows(src_map, "Джерело"), use_container_width=True)
+bucket_list = sorted(set(list(day_by_bucket_source.keys()) + list(base_by_bucket_source.keys())))
+default_bucket = "Інстаграм" if "Інстаграм" in bucket_list else (bucket_list[0] if bucket_list else "Інше")
 
-        st.subheader("📷 Інстаграм — Термін → Джерело (База)")
-        src_map_b = base_instagram_term_source.get(term_pick, {})
-        st.dataframe(counts_dict_to_rows(src_map_b, "Джерело"), use_container_width=True)
+if "ui_bucket" not in st.session_state:
+    st.session_state["ui_bucket"] = default_bucket
 
-        st.divider()
+selected_bucket = st.selectbox(
+    "Оберіть категорію",
+    bucket_list,
+    index=bucket_list.index(st.session_state["ui_bucket"]) if st.session_state["ui_bucket"] in bucket_list else 0,
+    key="ui_bucket",
+)
 
-    # --------------------------------------------------
-    # DEAL LIST
-    # --------------------------------------------------
-    st.subheader("🧾 Деталізація по угодам")
-    st.dataframe(rows, use_container_width=True)
+st.caption("Таблиці нижче = Взято/Дозвон/ЦА/Зацікавлені/Запис по кожному джерелу в обраній категорії.")
 
-    # CSV export
-    import csv, io
-    buf = io.StringIO()
-    fieldnames = [
-        "Угода №", "Номер телефона", "Назва картки", "Поточний статус",
-        "Джерело (ID)", "Джерело", "Термін", "Категорія", "Інстаграм сегмент",
-        "Результат", "Причина / коментар"
-    ]
-    w = csv.DictWriter(buf, fieldnames=fieldnames)
-    w.writeheader()
-    for r in rows:
-        w.writerow({k: r.get(k, "") for k in fieldnames})
+st.markdown("**День**")
+st.dataframe(bucket_source_to_rows(day_by_bucket_source, selected_bucket), use_container_width=True)
 
-    st.download_button(
-        "⬇️ Завантажити CSV",
-        data=buf.getvalue().encode("utf-8"),
-        file_name=f"report_{manager_name}_{target_day.isoformat()}.csv",
-        mime="text/csv",
+st.markdown("**База**")
+st.dataframe(bucket_source_to_rows(base_by_bucket_source, selected_bucket), use_container_width=True)
+
+st.divider()
+
+# --------------------------------------------------
+# DEEP: Instagram term -> source (works without losing report)
+# --------------------------------------------------
+if selected_bucket == "Інстаграм":
+    st.subheader("📷 Інстаграм — Термін → Джерело")
+
+    if "ui_insta_term" not in st.session_state:
+        st.session_state["ui_insta_term"] = "Ближчий час"
+
+    term_pick = st.selectbox(
+        "Оберіть сегмент Інстаграм",
+        ["Ближчий час", "Майбутнє"],
+        index=0 if st.session_state["ui_insta_term"] == "Ближчий час" else 1,
+        key="ui_insta_term",
     )
+
+    st.markdown("**День**")
+    src_map = day_instagram_term_source.get(term_pick, {})
+    st.dataframe(counts_dict_to_rows(src_map, "Джерело"), use_container_width=True)
+
+    st.markdown("**База**")
+    src_map_b = base_instagram_term_source.get(term_pick, {})
+    st.dataframe(counts_dict_to_rows(src_map_b, "Джерело"), use_container_width=True)
+
+    st.divider()
+
+# --------------------------------------------------
+# DEAL LIST
+# --------------------------------------------------
+st.subheader("🧾 Деталізація по угодам")
+st.dataframe(rows, use_container_width=True)
+
+# CSV export
+import csv, io
+buf = io.StringIO()
+fieldnames = [
+    "Угода №", "Номер телефона", "Назва картки", "Поточний статус",
+    "Джерело (ID)", "Джерело", "Термін", "Категорія", "Інстаграм сегмент",
+    "Результат", "Причина / коментар"
+]
+w = csv.DictWriter(buf, fieldnames=fieldnames)
+w.writeheader()
+for r in rows:
+    w.writerow({k: r.get(k, "") for k in fieldnames})
+
+st.download_button(
+    "⬇️ Завантажити CSV",
+    data=buf.getvalue().encode("utf-8"),
+    file_name=f"report_{manager_name}_{target_day.isoformat()}.csv",
+    mime="text/csv",
+)
