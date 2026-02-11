@@ -729,11 +729,11 @@ def build_report(manager_id: int, target_day: date):
                 "Джерело (ID)": source_id,
                 "Джерело": source_name,
                 "Термін": term_text,
-                "Країна номера": phone_region,
+                "Країна номера": region,   # ← ДОДАТИ ОЦЕ
                 "Категорія": bucket,
                 "Інстаграм сегмент": insta_term,
-                "Результат": "БАЗА: " + ", ".join(LEVEL_NAMES[l] for l in sorted(base_levels)),
-                "Причина / коментар": f"Оживлення після паузи > {BASE_INACTIVITY_DAYS} днів (останній рух: {last_before_date})",
+                "Результат": counted_to,
+                "Причина / коментар": reason_text,
             })
             continue
 
