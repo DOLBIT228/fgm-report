@@ -56,6 +56,9 @@ BASE_INACTIVITY_DAYS = 30
 TERM_FIELD = "UF_CRM_1749123119"  # поле "Термін" (list)
 COUNTRY_FIELD = "UF_CRM_1765791110365"
 
+COUNTRY_ENUM_UA = "54065"
+COUNTRY_ENUM_FOREIGN = "54067"
+COUNTRY_ENUM_NO_PHONE = "54069"
 
 # ======================================================
 # HELPERS
@@ -351,16 +354,26 @@ def instagram_term_segment(term_text: str) -> str:
     # "Ближчий час" лише якщо значення == "Ближчим часом"
     return "Ближчий час" if _norm(term_text) == _norm("Ближчим часом") else "Майбутнє"
 
-def country_group_from_raw(raw) -> str:
-    if isinstance(raw, list) and raw:
-        raw = raw[0]
+def country_segment_from_raw(raw_value) -> str:
+    """
+    Повертає:
+    - 'Україна'
+    - 'Закордон'
+    Немає номеру = Україна
+    Порожнє значення = Україна
+    """
 
-    val = str(raw or "").strip().lower()
+    if raw_value is None:
+        return "Україна"
 
-    if val == "закордон":
+    if isinstance(raw_value, list) and raw_value:
+        raw_value = raw_value[0]
+
+    raw_str = str(raw_value).strip()
+
+    if raw_str == COUNTRY_ENUM_FOREIGN:
         return "Закордон"
 
-    # "Україна" + "немає номеру" + пусто → все Україна
     return "Україна"
 
 
@@ -690,7 +703,7 @@ def build_report(manager_id: int, target_day: date):
         term_text = term_text_from_raw(term_raw, term_enum_map)
 
         country_raw = d.get(COUNTRY_FIELD)
-        country_group = country_group_from_raw(country_raw)
+        country_group = country_segment_from_raw(country_raw)
 
         history = fetch_stagehistory(deal_id)
 
@@ -991,7 +1004,7 @@ import csv, io
 buf = io.StringIO()
 fieldnames = [
     "Угода №", "Номер телефона", "Назва картки", "Поточний статус",
-    "Джерело (ID)", "Джерело", "Термін", "Категорія", "Інстаграм сегмент",
+    "Джерело (ID)", "Джерело", "Термін", "Категорія", "Країна", "Інстаграм сегмент",
     "Результат", "Причина / коментар"
 ]
 w = csv.DictWriter(buf, fieldnames=fieldnames)
