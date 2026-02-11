@@ -397,6 +397,16 @@ def term_text_from_raw(raw, enum_map: dict) -> str:
         return ""
     return enum_map.get(s, s)
 
+def phone_region_from_raw(raw) -> str:
+    if raw is None:
+        return "Немає номеру"
+
+    if isinstance(raw, list) and raw:
+        raw = raw[0]
+
+    val = str(raw).strip()
+    return PHONE_REGION_ENUM.get(val, "Немає номеру")
+
 
 # ======================================================
 # FETCH: DEALS + STAGEHISTORY
@@ -644,8 +654,9 @@ def build_report(manager_id: int, target_day: date):
     total_day = empty_counts()
     total_base = empty_counts()
 
-    day_by_bucket = defaultdict(empty_counts)
-    base_by_bucket = defaultdict(empty_counts)
+    # Новий верхній рівень: регіон -> bucket
+    day_by_region_bucket = defaultdict(lambda: defaultdict(empty_counts))
+    base_by_region_bucket = defaultdict(lambda: defaultdict(empty_counts))
 
     day_by_bucket_source = defaultdict(lambda: defaultdict(empty_counts))
     base_by_bucket_source = defaultdict(lambda: defaultdict(empty_counts))
@@ -677,6 +688,9 @@ def build_report(manager_id: int, target_day: date):
         term_raw = d.get(TERM_FIELD, "")
         term_text = term_text_from_raw(term_raw, term_enum_map)
 
+        region_raw = d.get(PHONE_REGION_FIELD)
+        region = phone_region_from_raw(region_raw)
+
         phone_region_raw = d.get(PHONE_REGION_FIELD)
         phone_region = ""
         if phone_region_raw:
@@ -698,7 +712,7 @@ def build_report(manager_id: int, target_day: date):
 
         if is_base:
             add_levels(total_base, base_levels)
-            add_levels(base_by_bucket[bucket], base_levels)
+            add_levels(base_by_region_bucket[region][bucket], base_levels)
             if phone_region:
                 add_levels(base_by_phone_region[phone_region], base_levels)
             add_levels(base_by_bucket_source[bucket][source_name], base_levels)
@@ -725,7 +739,7 @@ def build_report(manager_id: int, target_day: date):
         day_levels, day_reason, before, today_lvl = levels_gained_on_day(history, target_day)
         if day_levels:
             add_levels(total_day, day_levels)
-            add_levels(day_by_bucket[bucket], day_levels)
+            add_levels(day_by_region_bucket[region][bucket], day_levels)
             if phone_region:
                 add_levels(day_by_phone_region[phone_region], day_levels)
             add_levels(day_by_bucket_source[bucket][source_name], day_levels)
@@ -765,8 +779,8 @@ def build_report(manager_id: int, target_day: date):
     return (
         total_day,
         total_base,
-        dd_counts_to_dict(day_by_bucket),
-        dd_counts_to_dict(base_by_bucket),
+        dd2_counts_to_dict(day_by_region_bucket),
+        dd2_counts_to_dict(base_by_region_bucket),
         dd2_counts_to_dict(day_by_bucket_source),
         dd2_counts_to_dict(base_by_bucket_source),
         dd_counts_to_dict(day_instagram_by_term),
@@ -778,6 +792,7 @@ def build_report(manager_id: int, target_day: date):
         rows,
         meta
     )
+
 
 
 # ======================================================
@@ -869,8 +884,8 @@ if st.session_state.get("report_key") != report_key or "report" not in st.sessio
 (
     total_day,
     total_base,
-    day_by_bucket,
-    base_by_bucket,
+    day_by_region_bucket,
+    base_by_region_bucket,
     day_by_bucket_source,
     base_by_bucket_source,
     day_instagram_by_term,
@@ -911,11 +926,23 @@ st.divider()
 # --------------------------------------------------
 # BUCKET BREAKDOWN
 # --------------------------------------------------
-st.subheader("📌 Деталізація за категоріями (bucket) — День")
-st.dataframe(counts_dict_to_rows(day_by_bucket, "Категорія"), use_container_width=True)
+st.subheader("📌 Деталізація за регіоном → категорією — День")
 
-st.subheader("📌 Деталізація за категоріями (bucket) — База")
-st.dataframe(counts_dict_to_rows(base_by_bucket, "Категорія"), use_container_width=True)
+for region, buckets in day_by_region_bucket.items():
+    st.markdown(f"### {region}")
+    st.dataframe(
+        counts_dict_to_rows(buckets, "Категорія"),
+        use_container_width=True
+    )
+
+st.subheader("📌 Деталізація за регіоном → категорією — База")
+
+for region, buckets in base_by_region_bucket.items():
+    st.markdown(f"### {region}")
+    st.dataframe(
+        counts_dict_to_rows(buckets, "Категорія"),
+        use_container_width=True
+    )
 
 st.divider()
 
