@@ -841,6 +841,33 @@ def bucket_source_to_rows(d: dict, bucket_name: str):
     sources = d.get(bucket_name, {}) if isinstance(d, dict) else {}
     return counts_dict_to_rows(sources, "Джерело")
 
+def grouped_region_table(data: dict):
+    """
+    data = {
+        "Інстаграм Ближчий час": {
+            "Вікторія Гарденс": {...},
+            ...
+        },
+        ...
+    }
+    """
+    rows = []
+
+    for category, sources in data.items():
+        first = True
+        for source, counts in sources.items():
+            rows.append({
+                "Категорія": category if first else "",
+                "Джерело": source,
+                "Взято": counts.get("Взято", 0),
+                "Дозвон": counts.get("Дозвон", 0),
+                "ЦА": counts.get("ЦА", 0),
+                "Зацікавлені": counts.get("Зацікавлені", 0),
+                "Запис": counts.get("Запис", 0),
+            })
+            first = False
+
+    return rows
 
 # ======================================================
 # UI
@@ -927,126 +954,72 @@ st.divider()
 # УКРАЇНА / ЗАКОРДОН — СПРОЩЕНА СТРУКТУРА
 # --------------------------------------------------
 
-st.subheader("🇺🇦 Україна")
-
-def build_region_table(region_name, source_map):
+def build_region_table(region_name):
     rows_out = []
 
-    # беремо всі джерела цієї країни
-    for source_name, counts in sorted(source_map.items(), key=lambda x: x[0]):
+    # проходимо по bucket → джерелах
+    for bucket, sources in day_by_bucket_source.items():
 
-        # Категорія = bucket + сегмент інсти якщо є
-        bucket = ""
-        insta_segment = ""
+        for source_name, counts in sources.items():
 
-        # шукаємо bucket через перший рядок з rows
-        # (ми вже його туди записували)
-        for r in rows:
-            if r["Джерело"] == source_name:
-                bucket = r.get("Категорія", "")
-                insta_segment = r.get("Інстаграм сегмент", "")
-                break
+            # шукаємо будь-який рядок щоб визначити регіон
+            region_match = False
+            insta_segment = ""
 
-        if bucket == "Інстаграм" and insta_segment:
-            category_label = f"Інстаграм {insta_segment}"
+            for r in rows:
+                if (
+                    r.get("Джерело") == source_name
+                    and r.get("Результат", "").startswith("ДЕНЬ")
+                ):
+                    region_raw = r.get("Номер телефона")
+                    if region_raw == region_name:
+                        region_match = True
+                        insta_segment = r.get("Інстаграм сегмент", "")
+                        break
+
+            if not region_match:
+                continue
+
+            # формуємо назву категорії
+            if bucket == "Інстаграм" and insta_segment:
+                category_label = f"Інстаграм {insta_segment}"
+            else:
+                category_label = bucket
+
+            rows_out.append({
+                "Категорія": category_label,
+                "Джерело": source_name,
+                "Взято": counts.get("Взято", 0),
+                "Дозвон": counts.get("Дозвон", 0),
+                "ЦА": counts.get("ЦА", 0),
+                "Зацікавлені": counts.get("Зацікавлені", 0),
+                "Запис": counts.get("Запис", 0),
+            })
+
+    # ---- робимо щоб категорія писалась 1 раз ----
+    last_category = None
+    for row in rows_out:
+        if row["Категорія"] == last_category:
+            row["Категорія"] = ""
         else:
-            category_label = bucket
-
-        rows_out.append({
-            "Категорія": category_label,
-            "Джерело": source_name,
-            "Взято": counts.get("Взято", 0),
-            "Дозвон": counts.get("Дозвон", 0),
-            "ЦА": counts.get("ЦА", 0),
-            "Зацікавлені": counts.get("Зацікавлені", 0),
-            "Запис": counts.get("Запис", 0),
-        })
+            last_category = row["Категорія"]
 
     return rows_out
 
 
-# ---------- Україна ----------
-ua_sources = {}
-for r in rows:
-    if r.get("Результат", "").startswith("ДЕНЬ") and r.get("Номер телефона"):
-        if r.get("Категорія") and r.get("Номер телефона"):
-            if r.get("Причина / коментар") != "" or True:
-                if r.get("Категорія"):
-                    pass
+# ---------- УКРАЇНА ----------
+st.subheader("🇺🇦 Україна")
+st.dataframe(
+    build_region_table("Україна"),
+    use_container_width=True
+)
 
-# беремо дані вже пораховані
-ua_sources = day_by_phone_region.get("Україна", {})
-
-# якщо структура не по джерелах — будуємо вручну
-ua_map = {}
-for r in rows:
-    if r.get("Категорія") and r.get("Результат", "").startswith("ДЕНЬ"):
-        if r.get("Номер телефона"):
-            # перевірка регіону
-            pass
-
-# правильне джерело — day_by_bucket_source
-ua_source_map = {}
-
-for bucket, sources in day_by_bucket_source.items():
-    for source_name, counts in sources.items():
-        for r in rows:
-            if r["Джерело"] == source_name and r.get("Результат", "").startswith("ДЕНЬ"):
-                # перевіряємо регіон
-                if r.get("Номер телефона"):
-                    # беремо ENUM регіону
-                    pass
-
-# СПРОЩЕНО: беремо готову агрегацію
-ua_source_map = {}
-
-for r in rows:
-    if not r.get("Результат", "").startswith("ДЕНЬ"):
-        continue
-    if r.get("Номер телефона") is None:
-        continue
-
-    # регіон
-    region = r.get("Номер телефона")
-    # використовуємо поле PHONE_REGION_ENUM через build_report
-    # беремо з r якщо потрібно
-
-# 🔹 ФАКТИЧНА АГРЕГАЦІЯ
-ua_source_map = {}
-
-for bucket, sources in day_by_bucket_source.items():
-    for source_name, counts in sources.items():
-        for r in rows:
-            if r["Джерело"] == source_name and r.get("Результат", "").startswith("ДЕНЬ"):
-                if r.get("Категорія") and r.get("Категорія"):
-                    pass
-
-# ✅ ПРОСТИЙ ВАРІАНТ: беремо вже пораховані дані
-ua_source_map = {}
-for bucket, sources in day_by_bucket_source.items():
-    for source_name, counts in sources.items():
-        for r in rows:
-            if r["Джерело"] == source_name:
-                if r.get("Категорія") and r.get("Результат", "").startswith("ДЕНЬ"):
-                    if r.get("Номер телефона"):
-                        pass
-
-# 👉 ПРАВИЛЬНЕ РІШЕННЯ — використовуємо day_by_bucket_source + rows
-ua_source_map = {}
-for bucket, sources in day_by_bucket_source.items():
-    for source_name, counts in sources.items():
-        for r in rows:
-            if r["Джерело"] == source_name and r.get("Результат", "").startswith("ДЕНЬ"):
-                # беремо регіон з ENUM
-                region_raw = r.get("Номер телефона")
-        # беремо регіон напряму з day_by_phone_region
-        # тому просто беремо counts якщо регіон Україна
-
-for source_name, counts in day_by_bucket_source.get("Інстаграм", {}).items():
-    ua_source_map[source_name] = counts
-
-st.dataframe(build_region_table("Україна", ua_source_map), use_container_width=True)
-
+# ---------- ЗАКОРДОН ----------
+st.subheader("🌍 Закордон")
+st.dataframe(
+    build_region_table("Закордон"),
+    use_container_width=True
+)
 
 # --------------------------------------------------
 
