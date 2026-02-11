@@ -1,4 +1,3 @@
-import hashlib
 import requests
 import streamlit as st
 import time
@@ -10,12 +9,10 @@ try:
 except Exception:
     ZoneInfo = None
 
-
 # ======================================================
 # STREAMLIT PAGE
 # ======================================================
 st.set_page_config(page_title="FGM Daily Report", page_icon="📊", layout="wide")
-
 
 # ======================================================
 # CONFIG (from Streamlit secrets)
@@ -25,7 +22,6 @@ def get_secret(name: str, default=None):
         return st.secrets.get(name, default)
     except Exception:
         return default
-
 
 WEBHOOK_URL = get_secret("WEBHOOK_URL", "")
 LOCAL_TZ_NAME = get_secret("LOCAL_TZ_NAME", "Europe/Kyiv")
@@ -38,7 +34,6 @@ USERS = get_secret("USERS", {})
 if not USERS:
     st.error("Не задано USERS у secrets (логіни/паролі/ID менеджерів).")
     st.stop()
-
 
 # ======================================================
 # CONSTANTS
@@ -53,22 +48,21 @@ CATEGORIES = [CAT_CRM_FGM, CAT_ONLINE, CAT_OFFLINE, CAT_CHAT_SALES, CAT_VG]
 APPOINTMENT_CATEGORIES = {CAT_ONLINE, CAT_OFFLINE, CAT_CHAT_SALES, CAT_VG}
 
 BASE_INACTIVITY_DAYS = 30
-TERM_FIELD = "UF_CRM_1749123119"  # поле "Термін" (list)
+TERM_FIELD = "UF_CRM_1749123119"          # поле "Термін" (list)
 PHONE_REGION_FIELD = "UF_CRM_1765791110365"  # поле "Номер країни" (list)
 
+# ENUM MAP (як у вас)
 PHONE_REGION_ENUM = {
     "54065": "Україна",
     "54067": "Закордон",
     "54069": "Немає номеру",
 }
 
-
 # ======================================================
 # HELPERS
 # ======================================================
 def _norm(s: str) -> str:
     return (s or "").strip().casefold()
-
 
 def b24_get(method: str, params=None) -> dict:
     url = f"{WEBHOOK_URL}{method}"
@@ -78,7 +72,6 @@ def b24_get(method: str, params=None) -> dict:
     if "error" in data:
         raise RuntimeError(f"{data['error']}: {data.get('error_description')}")
     return data
-
 
 def parse_dt(value: str):
     if not value:
@@ -91,7 +84,6 @@ def parse_dt(value: str):
         except Exception:
             return None
 
-
 def to_local_date(dt: datetime):
     if not dt:
         return None
@@ -99,27 +91,47 @@ def to_local_date(dt: datetime):
         return dt.date()
     return dt.astimezone(ZoneInfo(LOCAL_TZ_NAME)).date()
 
-
 def is_modified_on(date_modify: str, target_day: date) -> bool:
     dt = parse_dt(date_modify)
     return dt and to_local_date(dt) == target_day
 
+def phone_region_group_from_raw(raw) -> str:
+    """
+    ГРУПА ДЛЯ ТАБЛИЦЬ:
+    - Закордон -> "Закордон" (54067)
+    - Немає номеру / пусто -> "Україна"
+    - Україна -> "Україна"
+    """
+    if raw is None:
+        return "Україна"
+    if isinstance(raw, list) and raw:
+        raw = raw[0]
+    val = str(raw).strip()
+    if val == "54067":
+        return "Закордон"
+    return "Україна"
+
+def phone_region_label_from_raw(raw) -> str:
+    """ЛЕЙБЛ ДЛЯ РЯДКА УГОДИ (може бути 'Немає номеру')."""
+    if raw is None:
+        return "Немає номеру"
+    if isinstance(raw, list) and raw:
+        raw = raw[0]
+    val = str(raw).strip()
+    return PHONE_REGION_ENUM.get(val, "Немає номеру")
 
 # ======================================================
 # LEVELS
 # ======================================================
 LEVEL_NAMES = {1: "Взято", 2: "Дозвон", 3: "ЦА", 4: "Зацікавлені", 5: "Запис"}
 
-
 def empty_counts():
     return {LEVEL_NAMES[i]: 0 for i in LEVEL_NAMES}
-
 
 def add_levels(counter: dict, levels: set[int]):
     for lvl in sorted(levels):
         if lvl in LEVEL_NAMES:
             counter[LEVEL_NAMES[lvl]] += 1
-
 
 # ======================================================
 # STAGE -> LEVEL
@@ -158,7 +170,6 @@ UNSUCCESSFUL_IGNORE = {
 UNSUCCESSFUL_AS_TAKEN = {"C59:LOSE"}
 UNSUCCESSFUL_AS_CALL = {"C59:APOLOGY", "C59:14", "C59:16", "C59:17", "C59:18"}
 
-
 def level_from_stage(category_id: int, stage_id: str) -> int:
     if category_id == CAT_CRM_FGM:
         if stage_id in UNSUCCESSFUL_IGNORE:
@@ -173,7 +184,6 @@ def level_from_stage(category_id: int, stage_id: str) -> int:
         return 5
 
     return 0
-
 
 # ======================================================
 # SOURCES (ID -> NAME) + BUCKET RULES
@@ -246,7 +256,6 @@ SOURCE_ID_TO_NAME = {
     "UC_J51RMG": "Телеграм 1 грам",
 }
 
-# ВАЖЛИВО: Конструктор + Сертифікат тепер теж входять в "Інстаграм" як ДЖЕРЕЛА
 INSTAGRAM_SOURCE_NAMES = {
     "Хочу каталог обручок",
     "Хочу каталог каблучок",
@@ -319,10 +328,8 @@ TELEGRAM_SOURCE_NAMES = {
     "5 Діаман в подарунок ТГ",
 }
 
-
 def source_name_from_id(source_id: str) -> str:
     return SOURCE_ID_TO_NAME.get(str(source_id or "").strip(), "")
-
 
 def bucket_from_source(source_id: str, term_text: str, is_base: bool) -> str:
     if is_base:
@@ -330,33 +337,22 @@ def bucket_from_source(source_id: str, term_text: str, is_base: bool) -> str:
 
     sname = source_name_from_id(source_id)
 
-    # Instagram bucket
     if sname in INSTAGRAM_SOURCE_NAMES:
         return "Інстаграм"
-
     if sname in LANDING_SOURCE_NAMES:
         return "Лендинг"
-
     if sname == "Чат-бот":
         return "Чат-бот"
-
-    # Основний сайт теж приходить як "Лендинг" (за вашим поясненням)
     if sname == "Лендинг":
         return "Сайт"
-
     if sname == "Квіз обручки":
         return "Лідогенерація"
-
     if sname in TELEGRAM_SOURCE_NAMES:
         return "Телеграм"
-
     return "Інше"
 
-
 def instagram_term_segment(term_text: str) -> str:
-    # "Ближчий час" лише якщо значення == "Ближчим часом"
     return "Ближчий час" if _norm(term_text) == _norm("Ближчим часом") else "Майбутнє"
-
 
 # ======================================================
 # USERFIELD ENUM MAP (TERM)
@@ -384,7 +380,6 @@ def fetch_deal_userfield_enum_map(field_name: str) -> dict:
                 out[eid] = val
     return out
 
-
 def term_text_from_raw(raw, enum_map: dict) -> str:
     if raw is None:
         return ""
@@ -397,17 +392,6 @@ def term_text_from_raw(raw, enum_map: dict) -> str:
         return ""
     return enum_map.get(s, s)
 
-def phone_region_from_raw(raw) -> str:
-    if raw is None:
-        return "Немає номеру"
-
-    if isinstance(raw, list) and raw:
-        raw = raw[0]
-
-    val = str(raw).strip()
-    return PHONE_REGION_ENUM.get(val, "Немає номеру")
-
-
 # ======================================================
 # FETCH: DEALS + STAGEHISTORY
 # ======================================================
@@ -415,7 +399,10 @@ def fetch_all_deals(manager_id: int):
     params = {
         "filter[ASSIGNED_BY_ID]": manager_id,
         "filter[CATEGORY_ID][]": CATEGORIES,
-        "select[]": ["ID", "TITLE", "STAGE_ID", "CATEGORY_ID","DATE_MODIFY", "CONTACT_ID", "SOURCE_ID", TERM_FIELD, PHONE_REGION_FIELD],
+        "select[]": [
+            "ID", "TITLE", "STAGE_ID", "CATEGORY_ID", "DATE_MODIFY",
+            "CONTACT_ID", "SOURCE_ID", TERM_FIELD, PHONE_REGION_FIELD
+        ],
         "start": 0
     }
 
@@ -430,7 +417,6 @@ def fetch_all_deals(manager_id: int):
             break
         params["start"] = data["next"]
     return deals
-
 
 def fetch_stagehistory(deal_id: int, limit: int = 2000):
     params = {
@@ -458,7 +444,6 @@ def fetch_stagehistory(deal_id: int, limit: int = 2000):
 
     return rows
 
-
 # ======================================================
 # CONTACT PHONES
 # ======================================================
@@ -474,7 +459,6 @@ def normalize_phone(phones):
                 if v:
                     return v
     return ""
-
 
 def fetch_contacts_phones(contact_ids: list[int]) -> dict[int, str]:
     contact_ids = [int(x) for x in contact_ids if x]
@@ -502,7 +486,6 @@ def fetch_contacts_phones(contact_ids: list[int]) -> dict[int, str]:
             params["start"] = data["next"]
     return phones
 
-
 # ======================================================
 # STAGEHISTORY ANALYSIS
 # ======================================================
@@ -520,7 +503,6 @@ def last_stage_key_before_day(history_rows, target_day: date):
             last_dt = dt
             last_key = (int(row.get("CATEGORY_ID", -1)), row.get("STAGE_ID", ""))
     return last_dt, last_key
-
 
 def has_real_stage_change_on_day(history_rows, target_day: date) -> bool:
     _, prev_key = last_stage_key_before_day(history_rows, target_day)
@@ -546,7 +528,6 @@ def has_real_stage_change_on_day(history_rows, target_day: date) -> bool:
 
     return False
 
-
 def last_stage_change_before_day(history_rows, target_day: date):
     last_dt = None
     for row in history_rows:
@@ -560,7 +541,6 @@ def last_stage_change_before_day(history_rows, target_day: date):
             if last_dt is None or dt > last_dt:
                 last_dt = dt
     return last_dt
-
 
 def max_levels_before_and_on_day(history_rows, target_day: date):
     max_before = 0
@@ -591,7 +571,6 @@ def max_levels_before_and_on_day(history_rows, target_day: date):
 
     return had_today, max_before, max_today
 
-
 def levels_gained_on_day(history_rows, target_day: date):
     had_today, max_before, max_today = max_levels_before_and_on_day(history_rows, target_day)
 
@@ -601,7 +580,6 @@ def levels_gained_on_day(history_rows, target_day: date):
         return set(), "Статус не піднявся вище (повторна робота)", max_before, max_today
 
     return set(range(max_before + 1, max_today + 1)), "OK", max_before, max_today
-
 
 def levels_for_base_report(history_rows, target_day: date):
     cutoff = target_day - timedelta(days=BASE_INACTIVITY_DAYS)
@@ -620,23 +598,14 @@ def levels_for_base_report(history_rows, target_day: date):
 
     return set(range(1, max_today + 1)), "BASE_OK", last_before_date, max_today
 
-
 # ======================================================
 # DEFAULTDICT -> DICT (for session_state safety)
 # ======================================================
 def dd_counts_to_dict(dd):
     return {k: dict(v) for k, v in dd.items()}
 
-
-def dd2_counts_to_dict(dd2):
-    out = {}
-    for k, inner in dd2.items():
-        out[k] = {kk: dict(vv) for kk, vv in inner.items()}
-    return out
-
-
 # ======================================================
-# REPORT (NO cache here, we store in session_state)
+# REPORT
 # ======================================================
 def build_report(manager_id: int, target_day: date):
     all_deals = fetch_all_deals(manager_id)
@@ -654,21 +623,9 @@ def build_report(manager_id: int, target_day: date):
     total_day = empty_counts()
     total_base = empty_counts()
 
-    # Новий верхній рівень: регіон -> bucket
-    day_by_region_bucket = defaultdict(lambda: defaultdict(empty_counts))
-    base_by_region_bucket = defaultdict(lambda: defaultdict(empty_counts))
-
-    day_by_bucket_source = defaultdict(lambda: defaultdict(empty_counts))
-    base_by_bucket_source = defaultdict(lambda: defaultdict(empty_counts))
-
-    day_instagram_by_term = defaultdict(empty_counts)
-    base_instagram_by_term = defaultdict(empty_counts)
-
-    day_instagram_term_source = defaultdict(lambda: defaultdict(empty_counts))
-    base_instagram_term_source = defaultdict(lambda: defaultdict(empty_counts))
-
-    day_by_phone_region = defaultdict(empty_counts)
-    base_by_phone_region = defaultdict(empty_counts)
+    # DAY таблиці по країні номера:
+    # region -> category_label -> source_name -> counts
+    day_region_category_source = defaultdict(lambda: defaultdict(lambda: defaultdict(empty_counts)))
 
     ignored_no_real_stage_change = 0
     skipped = Counter()
@@ -689,14 +646,8 @@ def build_report(manager_id: int, target_day: date):
         term_text = term_text_from_raw(term_raw, term_enum_map)
 
         region_raw = d.get(PHONE_REGION_FIELD)
-        region = phone_region_from_raw(region_raw)
-
-        phone_region_raw = d.get(PHONE_REGION_FIELD)
-        phone_region = ""
-        if phone_region_raw:
-            if isinstance(phone_region_raw, list):
-                phone_region_raw = phone_region_raw[0]
-            phone_region = PHONE_REGION_ENUM.get(str(phone_region_raw), str(phone_region_raw))
+        region_group = phone_region_group_from_raw(region_raw)   # Україна / Закордон (для таблиць)
+        region_label = phone_region_label_from_raw(region_raw)   # Україна / Закордон / Немає номеру (для рядка угоди)
 
         history = fetch_stagehistory(deal_id)
 
@@ -709,17 +660,14 @@ def build_report(manager_id: int, target_day: date):
 
         bucket = bucket_from_source(source_id, term_text, is_base)
         insta_term = instagram_term_segment(term_text) if bucket == "Інстаграм" else ""
+        category_label = f"Інстаграм {insta_term}" if (bucket == "Інстаграм" and insta_term) else bucket
 
+        # ---------- BASE ----------
         if is_base:
             add_levels(total_base, base_levels)
-            add_levels(base_by_region_bucket[region][bucket], base_levels)
-            if phone_region:
-                add_levels(base_by_phone_region[phone_region], base_levels)
-            add_levels(base_by_bucket_source[bucket][source_name], base_levels)
 
-            if bucket == "Інстаграм":
-                add_levels(base_instagram_by_term[insta_term], base_levels)
-                add_levels(base_instagram_term_source[insta_term][source_name], base_levels)
+            base_counted_to = "БАЗА: " + ", ".join(LEVEL_NAMES[l] for l in sorted(base_levels))
+            base_reason_text = f"Оживлення після паузи > {BASE_INACTIVITY_DAYS} днів (останній рух: {last_before_date})"
 
             rows.append({
                 "Угода №": deal_id,
@@ -729,36 +677,30 @@ def build_report(manager_id: int, target_day: date):
                 "Джерело (ID)": source_id,
                 "Джерело": source_name,
                 "Термін": term_text,
-                "Країна номера": region,   # ← ДОДАТИ ОЦЕ
+                "Країна номера": region_label,
                 "Категорія": bucket,
                 "Інстаграм сегмент": insta_term,
-                "Результат": counted_to,
-                "Причина / коментар": reason_text,
+                "Результат": base_counted_to,
+                "Причина / коментар": base_reason_text,
             })
             continue
 
-        day_levels, day_reason, before, today_lvl = levels_gained_on_day(history, target_day)
+        # ---------- DAY ----------
+        day_levels, day_reason, _, _ = levels_gained_on_day(history, target_day)
+
         counted_to = ""
         reason_text = ""
 
         if day_levels:
             add_levels(total_day, day_levels)
-            add_levels(day_by_region_bucket[region][bucket], day_levels)
 
-            if phone_region:
-                add_levels(day_by_phone_region[phone_region], day_levels)
-
-            add_levels(day_by_bucket_source[bucket][source_name], day_levels)
-
-            if bucket == "Інстаграм":
-                add_levels(day_instagram_by_term[insta_term], day_levels)
-                add_levels(day_instagram_term_source[insta_term][source_name], day_levels)
+            # агрегуємо в таблицю (Україна / Закордон)
+            add_levels(day_region_category_source[region_group][category_label][source_name], day_levels)
 
             counted_to = "ДЕНЬ: " + ", ".join(LEVEL_NAMES[l] for l in sorted(day_levels))
         else:
             skipped[day_reason] += 1
             reason_text = day_reason
-
 
         rows.append({
             "Угода №": deal_id,
@@ -768,6 +710,7 @@ def build_report(manager_id: int, target_day: date):
             "Джерело (ID)": source_id,
             "Джерело": source_name,
             "Термін": term_text,
+            "Країна номера": region_label,
             "Категорія": bucket,
             "Інстаграм сегмент": insta_term,
             "Результат": counted_to,
@@ -784,21 +727,10 @@ def build_report(manager_id: int, target_day: date):
     return (
         total_day,
         total_base,
-        dd2_counts_to_dict(day_by_region_bucket),
-        dd2_counts_to_dict(base_by_region_bucket),
-        dd2_counts_to_dict(day_by_bucket_source),
-        dd2_counts_to_dict(base_by_bucket_source),
-        dd_counts_to_dict(day_instagram_by_term),
-        dd_counts_to_dict(base_instagram_by_term),
-        dd2_counts_to_dict(day_instagram_term_source),
-        dd2_counts_to_dict(base_instagram_term_source),
-        dd_counts_to_dict(day_by_phone_region),
-        dd_counts_to_dict(base_by_phone_region),
+        day_region_category_source,  # залишаємо як defaultdict (у session_state не кладемо окремо)
         rows,
         meta
     )
-
-
 
 # ======================================================
 # AUTH
@@ -813,7 +745,6 @@ def auth_block():
         if not user:
             st.sidebar.error("Невірний логін або пароль")
             return None
-
         if password != user.get("password"):
             st.sidebar.error("Невірний логін або пароль")
             return None
@@ -824,46 +755,23 @@ def auth_block():
 
     return st.session_state.get("user")
 
-
 # ======================================================
 # UI HELPERS
 # ======================================================
-def counts_dict_to_rows(d: dict, label_col: str):
-    rows = []
-    for k, v in sorted(d.items(), key=lambda x: str(x[0])):
-        rows.append({
-            label_col: k,
-            "Взято": v.get("Взято", 0),
-            "Дозвон": v.get("Дозвон", 0),
-            "ЦА": v.get("ЦА", 0),
-            "Зацікавлені": v.get("Зацікавлені", 0),
-            "Запис": v.get("Запис", 0),
-        })
-    return rows
-
-
-def bucket_source_to_rows(d: dict, bucket_name: str):
-    sources = d.get(bucket_name, {}) if isinstance(d, dict) else {}
-    return counts_dict_to_rows(sources, "Джерело")
-
-def grouped_region_table(data: dict):
+def grouped_region_table(region_data: dict):
     """
-    data = {
-        "Інстаграм Ближчий час": {
-            "Вікторія Гарденс": {...},
-            ...
-        },
-        ...
-    }
+    region_data = day_region_category_source["Україна"]  ->  {category_label: {source_name: counts}}
+    Повертає список рядків, де "Категорія" показується 1 раз на блок (далі пусто).
     """
-    rows = []
-
-    for category, sources in data.items():
+    out = []
+    for category_label in sorted(region_data.keys(), key=lambda x: str(x)):
+        sources = region_data.get(category_label, {})
         first = True
-        for source, counts in sources.items():
-            rows.append({
-                "Категорія": category if first else "",
-                "Джерело": source,
+        for source_name in sorted(sources.keys(), key=lambda x: str(x)):
+            counts = sources[source_name]
+            out.append({
+                "Категорія": category_label if first else "",
+                "Джерело": source_name,
                 "Взято": counts.get("Взято", 0),
                 "Дозвон": counts.get("Дозвон", 0),
                 "ЦА": counts.get("ЦА", 0),
@@ -871,8 +779,7 @@ def grouped_region_table(data: dict):
                 "Запис": counts.get("Запис", 0),
             })
             first = False
-
-    return rows
+    return out
 
 # ======================================================
 # UI
@@ -895,10 +802,8 @@ with cols[1]:
 with cols[2]:
     st.caption("Звіт рахує лише реальні зміни статусів. База — тільки після паузи > 30 днів.")
 
-# Ключ збереження звіту
 report_key = f"{manager_id}:{target_day.isoformat()}"
 
-# Кнопка формування
 if st.button("🔎 Сформувати звіт", type="primary"):
     t0 = time.time()
     with st.spinner("Формую звіт..."):
@@ -908,27 +813,11 @@ if st.button("🔎 Сформувати звіт", type="primary"):
     st.session_state["report_key"] = report_key
     st.session_state["report_elapsed"] = elapsed
 
-# Якщо звіту нема — показати інфо і стоп
 if st.session_state.get("report_key") != report_key or "report" not in st.session_state:
     st.info("Натисніть «Сформувати звіт», щоб завантажити дані.")
     st.stop()
 
-(
-    total_day,
-    total_base,
-    day_by_region_bucket,
-    base_by_region_bucket,
-    day_by_bucket_source,
-    base_by_bucket_source,
-    day_instagram_by_term,
-    base_instagram_by_term,
-    day_instagram_term_source,
-    base_instagram_term_source,
-    day_by_phone_region,
-    base_by_phone_region,
-    rows,
-    meta
-) = st.session_state["report"]
+(total_day, total_base, day_region_category_source, rows, meta) = st.session_state["report"]
 
 elapsed = st.session_state.get("report_elapsed")
 if elapsed is not None:
@@ -956,83 +845,19 @@ b5.metric("Запис", total_base["Запис"])
 st.divider()
 
 # --------------------------------------------------
-# УКРАЇНА / ЗАКОРДОН — СПРОЩЕНА СТРУКТУРА
+# УКРАЇНА / ЗАКОРДОН — ТАБЛИЦІ (ДЕНЬ)
 # --------------------------------------------------
-
-def build_region_table(region_name):
-    rows_out = []
-
-    # агрегуємо тільки ДЕНЬ
-    region_data = {}
-
-    for r in rows:
-        if not r.get("Результат", "").startswith("ДЕНЬ"):
-            continue
-
-        if r.get("Причина / коментар") == "":
-            pass
-
-        # беремо регіон із ENUM який ти вже рахуєш в build_report
-        phone_region = r.get("Країна номера")
-
-        if phone_region != region_name:
-            continue
-
-        source_name = r.get("Джерело", "")
-        bucket = r.get("Категорія", "")
-        insta_segment = r.get("Інстаграм сегмент", "")
-
-        if bucket == "Інстаграм" and insta_segment:
-            category_label = f"Інстаграм {insta_segment}"
-        else:
-            category_label = bucket
-
-        key = (category_label, source_name)
-
-        if key not in region_data:
-            region_data[key] = {
-                "Взято": 0,
-                "Дозвон": 0,
-                "ЦА": 0,
-                "Зацікавлені": 0,
-                "Запис": 0,
-            }
-
-        # додаємо значення з тексту результату
-        result_text = r.get("Результат", "")
-
-        for level in ["Взято", "Дозвон", "ЦА", "Зацікавлені", "Запис"]:
-            if level in result_text:
-                region_data[key][level] += 1
-
-    # формуємо таблицю
-    for (category_label, source_name), counts in sorted(region_data.items()):
-        rows_out.append({
-            "Категорія": category_label,
-            "Джерело": source_name,
-            "Взято": counts["Взято"],
-            "Дозвон": counts["Дозвон"],
-            "ЦА": counts["ЦА"],
-            "Зацікавлені": counts["Зацікавлені"],
-            "Запис": counts["Запис"],
-        })
-
-    return rows_out
-
-
-# ---------- УКРАЇНА ----------
 st.subheader("🇺🇦 Україна")
-st.dataframe(
-    build_region_table("Україна"),
-    use_container_width=True
-)
+ua_data = day_region_category_source.get("Україна", {})
+ua_table = grouped_region_table(ua_data)
+st.dataframe(ua_table, use_container_width=True)
 
-# ---------- ЗАКОРДОН ----------
 st.subheader("🌍 Закордон")
-st.dataframe(
-    build_region_table("Закордон"),
-    use_container_width=True
-)
+foreign_data = day_region_category_source.get("Закордон", {})
+foreign_table = grouped_region_table(foreign_data)
+st.dataframe(foreign_table, use_container_width=True)
+
+st.divider()
 
 # --------------------------------------------------
 # DEAL LIST
@@ -1045,7 +870,7 @@ import csv, io
 buf = io.StringIO()
 fieldnames = [
     "Угода №", "Номер телефона", "Назва картки", "Поточний статус",
-    "Джерело (ID)", "Джерело", "Термін", "Категорія", "Інстаграм сегмент",
+    "Джерело (ID)", "Джерело", "Термін", "Країна номера", "Категорія", "Інстаграм сегмент",
     "Результат", "Причина / коментар"
 ]
 w = csv.DictWriter(buf, fieldnames=fieldnames)
