@@ -1031,19 +1031,6 @@ st.dataframe(
 )
 
 # --------------------------------------------------
-
-st.subheader("🌍 Закордон")
-
-foreign_source_map = {}
-
-for source_name, counts in day_by_bucket_source.get("Інстаграм", {}).items():
-    foreign_source_map[source_name] = counts
-
-st.dataframe(build_region_table("Закордон", foreign_source_map), use_container_width=True)
-
-st.divider()
-
-# --------------------------------------------------
 # DEAL LIST
 # --------------------------------------------------
 st.subheader("🧾 Деталізація по угодам")
