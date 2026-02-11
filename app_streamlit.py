@@ -729,6 +729,7 @@ def build_report(manager_id: int, target_day: date):
                 "Джерело (ID)": source_id,
                 "Джерело": source_name,
                 "Термін": term_text,
+                "Країна номера": phone_region,
                 "Категорія": bucket,
                 "Інстаграм сегмент": insta_term,
                 "Результат": "БАЗА: " + ", ".join(LEVEL_NAMES[l] for l in sorted(base_levels)),
@@ -957,52 +958,60 @@ st.divider()
 def build_region_table(region_name):
     rows_out = []
 
-    # проходимо по bucket → джерелах
-    for bucket, sources in day_by_bucket_source.items():
+    # агрегуємо тільки ДЕНЬ
+    region_data = {}
 
-        for source_name, counts in sources.items():
+    for r in rows:
+        if not r.get("Результат", "").startswith("ДЕНЬ"):
+            continue
 
-            # шукаємо будь-який рядок щоб визначити регіон
-            region_match = False
-            insta_segment = ""
+        if r.get("Причина / коментар") == "":
+            pass
 
-            for r in rows:
-                if (
-                    r.get("Джерело") == source_name
-                    and r.get("Результат", "").startswith("ДЕНЬ")
-                ):
-                    region_raw = r.get("Номер телефона")
-                    if region_raw == region_name:
-                        region_match = True
-                        insta_segment = r.get("Інстаграм сегмент", "")
-                        break
+        # беремо регіон із ENUM який ти вже рахуєш в build_report
+        phone_region = r.get("Країна номера")
 
-            if not region_match:
-                continue
+        if phone_region != region_name:
+            continue
 
-            # формуємо назву категорії
-            if bucket == "Інстаграм" and insta_segment:
-                category_label = f"Інстаграм {insta_segment}"
-            else:
-                category_label = bucket
+        source_name = r.get("Джерело", "")
+        bucket = r.get("Категорія", "")
+        insta_segment = r.get("Інстаграм сегмент", "")
 
-            rows_out.append({
-                "Категорія": category_label,
-                "Джерело": source_name,
-                "Взято": counts.get("Взято", 0),
-                "Дозвон": counts.get("Дозвон", 0),
-                "ЦА": counts.get("ЦА", 0),
-                "Зацікавлені": counts.get("Зацікавлені", 0),
-                "Запис": counts.get("Запис", 0),
-            })
-
-    # ---- робимо щоб категорія писалась 1 раз ----
-    last_category = None
-    for row in rows_out:
-        if row["Категорія"] == last_category:
-            row["Категорія"] = ""
+        if bucket == "Інстаграм" and insta_segment:
+            category_label = f"Інстаграм {insta_segment}"
         else:
-            last_category = row["Категорія"]
+            category_label = bucket
+
+        key = (category_label, source_name)
+
+        if key not in region_data:
+            region_data[key] = {
+                "Взято": 0,
+                "Дозвон": 0,
+                "ЦА": 0,
+                "Зацікавлені": 0,
+                "Запис": 0,
+            }
+
+        # додаємо значення з тексту результату
+        result_text = r.get("Результат", "")
+
+        for level in ["Взято", "Дозвон", "ЦА", "Зацікавлені", "Запис"]:
+            if level in result_text:
+                region_data[key][level] += 1
+
+    # формуємо таблицю
+    for (category_label, source_name), counts in sorted(region_data.items()):
+        rows_out.append({
+            "Категорія": category_label,
+            "Джерело": source_name,
+            "Взято": counts["Взято"],
+            "Дозвон": counts["Дозвон"],
+            "ЦА": counts["ЦА"],
+            "Зацікавлені": counts["Зацікавлені"],
+            "Запис": counts["Запис"],
+        })
 
     return rows_out
 
