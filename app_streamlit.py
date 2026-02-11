@@ -54,6 +54,7 @@ APPOINTMENT_CATEGORIES = {CAT_ONLINE, CAT_OFFLINE, CAT_CHAT_SALES, CAT_VG}
 
 BASE_INACTIVITY_DAYS = 30
 TERM_FIELD = "UF_CRM_1749123119"  # поле "Термін" (list)
+COUNTRY_FIELD = "UF_CRM_1765791110365"
 
 
 # ======================================================
@@ -350,6 +351,18 @@ def instagram_term_segment(term_text: str) -> str:
     # "Ближчий час" лише якщо значення == "Ближчим часом"
     return "Ближчий час" if _norm(term_text) == _norm("Ближчим часом") else "Майбутнє"
 
+def country_group_from_raw(raw) -> str:
+    if isinstance(raw, list) and raw:
+        raw = raw[0]
+
+    val = str(raw or "").strip().lower()
+
+    if val == "закордон":
+        return "Закордон"
+
+    # "Україна" + "немає номеру" + пусто → все Україна
+    return "Україна"
+
 
 # ======================================================
 # USERFIELD ENUM MAP (TERM)
@@ -398,7 +411,7 @@ def fetch_all_deals(manager_id: int):
     params = {
         "filter[ASSIGNED_BY_ID]": manager_id,
         "filter[CATEGORY_ID][]": CATEGORIES,
-        "select[]": ["ID", "TITLE", "STAGE_ID", "CATEGORY_ID", "DATE_MODIFY", "CONTACT_ID", "SOURCE_ID", TERM_FIELD],
+        "select[]": ["ID", "TITLE", "STAGE_ID", "CATEGORY_ID", "DATE_MODIFY", "CONTACT_ID", "SOURCE_ID", TERM_FIELD, COUNTRY_FIELD],
         "start": 0
     }
 
@@ -617,6 +630,14 @@ def dd2_counts_to_dict(dd2):
         out[k] = {kk: dict(vv) for kk, vv in inner.items()}
     return out
 
+def dd3_counts_to_dict(dd3):
+    out = {}
+    for c, bmap in dd3.items():
+        out[c] = {}
+        for b, smap in bmap.items():
+            out[c][b] = {s: dict(v) for s, v in smap.items()}
+    return out
+
 
 # ======================================================
 # REPORT (NO cache here, we store in session_state)
@@ -637,11 +658,12 @@ def build_report(manager_id: int, target_day: date):
     total_day = empty_counts()
     total_base = empty_counts()
 
-    day_by_bucket = defaultdict(empty_counts)
-    base_by_bucket = defaultdict(empty_counts)
+    # --- НОВА СТРУКТУРА ---
+    day_by_country_bucket = defaultdict(lambda: defaultdict(empty_counts))
+    base_by_country_bucket = defaultdict(lambda: defaultdict(empty_counts))
 
-    day_by_bucket_source = defaultdict(lambda: defaultdict(empty_counts))
-    base_by_bucket_source = defaultdict(lambda: defaultdict(empty_counts))
+    day_by_country_bucket_source = defaultdict(lambda: defaultdict(lambda: defaultdict(empty_counts)))
+    base_by_country_bucket_source = defaultdict(lambda: defaultdict(lambda: defaultdict(empty_counts)))
 
     day_instagram_by_term = defaultdict(empty_counts)
     base_instagram_by_term = defaultdict(empty_counts)
@@ -667,6 +689,9 @@ def build_report(manager_id: int, target_day: date):
         term_raw = d.get(TERM_FIELD, "")
         term_text = term_text_from_raw(term_raw, term_enum_map)
 
+        country_raw = d.get(COUNTRY_FIELD)
+        country_group = country_group_from_raw(country_raw)
+
         history = fetch_stagehistory(deal_id)
 
         if not has_real_stage_change_on_day(history, target_day):
@@ -679,10 +704,12 @@ def build_report(manager_id: int, target_day: date):
         bucket = bucket_from_source(source_id, term_text, is_base)
         insta_term = instagram_term_segment(term_text) if bucket == "Інстаграм" else ""
 
+        # ================= BASE =================
         if is_base:
             add_levels(total_base, base_levels)
-            add_levels(base_by_bucket[bucket], base_levels)
-            add_levels(base_by_bucket_source[bucket][source_name], base_levels)
+
+            add_levels(base_by_country_bucket[country_group][bucket], base_levels)
+            add_levels(base_by_country_bucket_source[country_group][bucket][source_name], base_levels)
 
             if bucket == "Інстаграм":
                 add_levels(base_instagram_by_term[insta_term], base_levels)
@@ -697,17 +724,21 @@ def build_report(manager_id: int, target_day: date):
                 "Джерело": source_name,
                 "Термін": term_text,
                 "Категорія": bucket,
+                "Країна": country_group,
                 "Інстаграм сегмент": insta_term,
                 "Результат": "БАЗА: " + ", ".join(LEVEL_NAMES[l] for l in sorted(base_levels)),
-                "Причина / коментар": f"Оживлення після паузи > {BASE_INACTIVITY_DAYS} днів (останній рух: {last_before_date})",
+                "Причина / коментар": f"Оживлення після паузи > {BASE_INACTIVITY_DAYS} днів",
             })
             continue
 
+        # ================= DAY =================
         day_levels, day_reason, before, today_lvl = levels_gained_on_day(history, target_day)
+
         if day_levels:
             add_levels(total_day, day_levels)
-            add_levels(day_by_bucket[bucket], day_levels)
-            add_levels(day_by_bucket_source[bucket][source_name], day_levels)
+
+            add_levels(day_by_country_bucket[country_group][bucket], day_levels)
+            add_levels(day_by_country_bucket_source[country_group][bucket][source_name], day_levels)
 
             if bucket == "Інстаграм":
                 add_levels(day_instagram_by_term[insta_term], day_levels)
@@ -729,6 +760,7 @@ def build_report(manager_id: int, target_day: date):
             "Джерело": source_name,
             "Термін": term_text,
             "Категорія": bucket,
+            "Країна": country_group,
             "Інстаграм сегмент": insta_term,
             "Результат": counted_to,
             "Причина / коментар": reason_text,
@@ -744,10 +776,10 @@ def build_report(manager_id: int, target_day: date):
     return (
         total_day,
         total_base,
-        dd_counts_to_dict(day_by_bucket),
-        dd_counts_to_dict(base_by_bucket),
-        dd2_counts_to_dict(day_by_bucket_source),
-        dd2_counts_to_dict(base_by_bucket_source),
+        dd2_counts_to_dict(day_by_country_bucket),
+        dd2_counts_to_dict(base_by_country_bucket),
+        dd3_counts_to_dict(day_by_country_bucket_source),
+        dd3_counts_to_dict(base_by_country_bucket_source),
         dd_counts_to_dict(day_instagram_by_term),
         dd_counts_to_dict(base_instagram_by_term),
         dd2_counts_to_dict(day_instagram_term_source),
