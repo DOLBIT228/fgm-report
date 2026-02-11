@@ -54,6 +54,13 @@ APPOINTMENT_CATEGORIES = {CAT_ONLINE, CAT_OFFLINE, CAT_CHAT_SALES, CAT_VG}
 
 BASE_INACTIVITY_DAYS = 30
 TERM_FIELD = "UF_CRM_1749123119"  # поле "Термін" (list)
+PHONE_REGION_FIELD = "UF_CRM_1765791110365"  # поле "Номер країни" (list)
+
+PHONE_REGION_ENUM = {
+    "54065": "Україна",
+    "54067": "Закордон",
+    "54069": "Немає номеру",
+}
 
 
 # ======================================================
@@ -398,7 +405,7 @@ def fetch_all_deals(manager_id: int):
     params = {
         "filter[ASSIGNED_BY_ID]": manager_id,
         "filter[CATEGORY_ID][]": CATEGORIES,
-        "select[]": ["ID", "TITLE", "STAGE_ID", "CATEGORY_ID", "DATE_MODIFY", "CONTACT_ID", "SOURCE_ID", TERM_FIELD],
+        "select[]": ["ID", "TITLE", "STAGE_ID", "CATEGORY_ID","DATE_MODIFY", "CONTACT_ID", "SOURCE_ID", TERM_FIELD, PHONE_REGION_FIELD],
         "start": 0
     }
 
@@ -649,6 +656,9 @@ def build_report(manager_id: int, target_day: date):
     day_instagram_term_source = defaultdict(lambda: defaultdict(empty_counts))
     base_instagram_term_source = defaultdict(lambda: defaultdict(empty_counts))
 
+    day_by_phone_region = defaultdict(empty_counts)
+    base_by_phone_region = defaultdict(empty_counts)
+
     ignored_no_real_stage_change = 0
     skipped = Counter()
     rows = []
@@ -667,6 +677,13 @@ def build_report(manager_id: int, target_day: date):
         term_raw = d.get(TERM_FIELD, "")
         term_text = term_text_from_raw(term_raw, term_enum_map)
 
+        phone_region_raw = d.get(PHONE_REGION_FIELD)
+        phone_region = ""
+        if phone_region_raw:
+            if isinstance(phone_region_raw, list):
+                phone_region_raw = phone_region_raw[0]
+            phone_region = PHONE_REGION_ENUM.get(str(phone_region_raw), str(phone_region_raw))
+
         history = fetch_stagehistory(deal_id)
 
         if not has_real_stage_change_on_day(history, target_day):
@@ -682,6 +699,8 @@ def build_report(manager_id: int, target_day: date):
         if is_base:
             add_levels(total_base, base_levels)
             add_levels(base_by_bucket[bucket], base_levels)
+            if phone_region:
+                add_levels(base_by_phone_region[phone_region], base_levels)
             add_levels(base_by_bucket_source[bucket][source_name], base_levels)
 
             if bucket == "Інстаграм":
@@ -707,6 +726,8 @@ def build_report(manager_id: int, target_day: date):
         if day_levels:
             add_levels(total_day, day_levels)
             add_levels(day_by_bucket[bucket], day_levels)
+            if phone_region:
+                add_levels(day_by_phone_region[phone_region], day_levels)
             add_levels(day_by_bucket_source[bucket][source_name], day_levels)
 
             if bucket == "Інстаграм":
@@ -752,6 +773,8 @@ def build_report(manager_id: int, target_day: date):
         dd_counts_to_dict(base_instagram_by_term),
         dd2_counts_to_dict(day_instagram_term_source),
         dd2_counts_to_dict(base_instagram_term_source),
+        dd_counts_to_dict(day_by_phone_region),
+        dd_counts_to_dict(base_by_phone_region),
         rows,
         meta
     )
@@ -854,6 +877,8 @@ if st.session_state.get("report_key") != report_key or "report" not in st.sessio
     base_instagram_by_term,
     day_instagram_term_source,
     base_instagram_term_source,
+    day_by_phone_region,
+    base_by_phone_region,
     rows,
     meta
 ) = st.session_state["report"]
@@ -893,6 +918,15 @@ st.subheader("📌 Деталізація за категоріями (bucket) �
 st.dataframe(counts_dict_to_rows(base_by_bucket, "Категорія"), use_container_width=True)
 
 st.divider()
+
+st.subheader("📱 Деталізація по країні номера — День")
+st.dataframe(counts_dict_to_rows(day_by_phone_region, "Країна номера"), use_container_width=True)
+
+st.subheader("📱 Деталізація по країні номера — База")
+st.dataframe(counts_dict_to_rows(base_by_phone_region, "Країна номера"), use_container_width=True)
+
+st.divider()
+
 
 # --------------------------------------------------
 # SOURCES INSIDE BUCKETS (select works without losing report)
