@@ -738,11 +738,16 @@ def build_report(manager_id: int, target_day: date):
             continue
 
         day_levels, day_reason, before, today_lvl = levels_gained_on_day(history, target_day)
+        counted_to = ""
+        reason_text = ""
+
         if day_levels:
             add_levels(total_day, day_levels)
             add_levels(day_by_region_bucket[region][bucket], day_levels)
+
             if phone_region:
                 add_levels(day_by_phone_region[phone_region], day_levels)
+
             add_levels(day_by_bucket_source[bucket][source_name], day_levels)
 
             if bucket == "Інстаграм":
@@ -750,11 +755,10 @@ def build_report(manager_id: int, target_day: date):
                 add_levels(day_instagram_term_source[insta_term][source_name], day_levels)
 
             counted_to = "ДЕНЬ: " + ", ".join(LEVEL_NAMES[l] for l in sorted(day_levels))
-            reason_text = ""
         else:
             skipped[day_reason] += 1
-            counted_to = ""
             reason_text = day_reason
+
 
         rows.append({
             "Угода №": deal_id,
