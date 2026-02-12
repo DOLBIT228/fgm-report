@@ -1,3 +1,4 @@
+
 import requests
 import streamlit as st
 import time
@@ -48,8 +49,15 @@ CATEGORIES = [CAT_CRM_FGM, CAT_ONLINE, CAT_OFFLINE, CAT_CHAT_SALES, CAT_VG]
 APPOINTMENT_CATEGORIES = {CAT_ONLINE, CAT_OFFLINE, CAT_CHAT_SALES, CAT_VG}
 
 BASE_INACTIVITY_DAYS = 30
-TERM_FIELD = "UF_CRM_1749123119"          # поле "Термін" (list)
+TERM_FIELD = "UF_CRM_1749123119"  # поле "Термін" (list)
 PHONE_REGION_FIELD = "UF_CRM_1765791110365"  # поле "Номер країни" (list)
+
+# Спосіб запису (list)
+APPOINTMENT_METHOD_FIELD = "UF_CRM_1750870964613"
+APPOINTMENT_METHOD_ENUM = {
+    "47063": "Дзвінок",
+    "47065": "Повідомлення",
+}
 
 # ENUM MAP (як у вас)
 PHONE_REGION_ENUM = {
@@ -119,6 +127,17 @@ def phone_region_label_from_raw(raw) -> str:
         raw = raw[0]
     val = str(raw).strip()
     return PHONE_REGION_ENUM.get(val, "Немає номеру")
+
+def appointment_method_from_raw(raw) -> str:
+    """Дзвінок / Повідомлення / '—'."""
+    if raw is None:
+        return "—"
+    if isinstance(raw, list) and raw:
+        raw = raw[0]
+    if isinstance(raw, dict):
+        raw = raw.get("VALUE") or raw.get("value") or ""
+    val = str(raw).strip()
+    return APPOINTMENT_METHOD_ENUM.get(val, "—")
 
 # ======================================================
 # LEVELS
@@ -301,7 +320,6 @@ INSTAGRAM_SOURCE_NAMES = {
     "Платина Обручки",
     "ТікТок",
     "5 Діамант в подарунок інст",
-    # ДОДАЛИ:
     "Конструктор",
     "Сертифікат каблучки",
     "Сертифікат 1 грам обручки",
@@ -401,7 +419,7 @@ def fetch_all_deals(manager_id: int):
         "filter[CATEGORY_ID][]": CATEGORIES,
         "select[]": [
             "ID", "TITLE", "STAGE_ID", "CATEGORY_ID", "DATE_MODIFY",
-            "CONTACT_ID", "SOURCE_ID", TERM_FIELD, PHONE_REGION_FIELD
+            "CONTACT_ID", "SOURCE_ID", TERM_FIELD, PHONE_REGION_FIELD, APPOINTMENT_METHOD_FIELD
         ],
         "start": 0
     }
@@ -599,12 +617,6 @@ def levels_for_base_report(history_rows, target_day: date):
     return set(range(1, max_today + 1)), "BASE_OK", last_before_date, max_today
 
 # ======================================================
-# DEFAULTDICT -> DICT (for session_state safety)
-# ======================================================
-def dd_counts_to_dict(dd):
-    return {k: dict(v) for k, v in dd.items()}
-
-# ======================================================
 # REPORT
 # ======================================================
 def build_report(manager_id: int, target_day: date):
@@ -623,9 +635,14 @@ def build_report(manager_id: int, target_day: date):
     total_day = empty_counts()
     total_base = empty_counts()
 
-    # DAY таблиці по країні номера:
-    # region -> category_label -> source_name -> counts
-    day_region_category_source = defaultdict(lambda: defaultdict(lambda: defaultdict(empty_counts)))
+    # Додаткова деталізація в загальній підбивці: спосіб запису
+    day_totals_by_method = defaultdict(empty_counts)   # method -> counts
+    base_totals_by_method = defaultdict(empty_counts)  # method -> counts
+
+    # DAY таблиці: region -> category_label -> method -> source_name -> counts
+    day_region_category_method_source = defaultdict(
+        lambda: defaultdict(lambda: defaultdict(lambda: defaultdict(empty_counts)))
+    )
 
     ignored_no_real_stage_change = 0
     skipped = Counter()
@@ -646,8 +663,11 @@ def build_report(manager_id: int, target_day: date):
         term_text = term_text_from_raw(term_raw, term_enum_map)
 
         region_raw = d.get(PHONE_REGION_FIELD)
-        region_group = phone_region_group_from_raw(region_raw)   # Україна / Закордон (для таблиць)
-        region_label = phone_region_label_from_raw(region_raw)   # Україна / Закордон / Немає номеру (для рядка угоди)
+        region_group = phone_region_group_from_raw(region_raw)  # Україна / Закордон
+        region_label = phone_region_label_from_raw(region_raw)  # Україна / Закордон / Немає номеру
+
+        method_raw = d.get(APPOINTMENT_METHOD_FIELD)
+        method_label = appointment_method_from_raw(method_raw)  # Дзвінок / Повідомлення / —
 
         history = fetch_stagehistory(deal_id)
 
@@ -665,6 +685,7 @@ def build_report(manager_id: int, target_day: date):
         # ---------- BASE ----------
         if is_base:
             add_levels(total_base, base_levels)
+            add_levels(base_totals_by_method[method_label], base_levels)
 
             base_counted_to = "БАЗА: " + ", ".join(LEVEL_NAMES[l] for l in sorted(base_levels))
             base_reason_text = f"Оживлення після паузи > {BASE_INACTIVITY_DAYS} днів (останній рух: {last_before_date})"
@@ -678,6 +699,7 @@ def build_report(manager_id: int, target_day: date):
                 "Джерело": source_name,
                 "Термін": term_text,
                 "Країна номера": region_label,
+                "Спосіб запису": method_label,
                 "Категорія": bucket,
                 "Інстаграм сегмент": insta_term,
                 "Результат": base_counted_to,
@@ -693,9 +715,12 @@ def build_report(manager_id: int, target_day: date):
 
         if day_levels:
             add_levels(total_day, day_levels)
+            add_levels(day_totals_by_method[method_label], day_levels)
 
-            # агрегуємо в таблицю (Україна / Закордон)
-            add_levels(day_region_category_source[region_group][category_label][source_name], day_levels)
+            add_levels(
+                day_region_category_method_source[region_group][category_label][method_label][source_name],
+                day_levels
+            )
 
             counted_to = "ДЕНЬ: " + ", ".join(LEVEL_NAMES[l] for l in sorted(day_levels))
         else:
@@ -711,6 +736,7 @@ def build_report(manager_id: int, target_day: date):
             "Джерело": source_name,
             "Термін": term_text,
             "Країна номера": region_label,
+            "Спосіб запису": method_label,
             "Категорія": bucket,
             "Інстаграм сегмент": insta_term,
             "Результат": counted_to,
@@ -727,7 +753,9 @@ def build_report(manager_id: int, target_day: date):
     return (
         total_day,
         total_base,
-        day_region_category_source,  # залишаємо як defaultdict (у session_state не кладемо окремо)
+        dict(day_totals_by_method),
+        dict(base_totals_by_method),
+        day_region_category_method_source,
         rows,
         meta
     )
@@ -760,26 +788,68 @@ def auth_block():
 # ======================================================
 def grouped_region_table(region_data: dict):
     """
-    region_data = day_region_category_source["Україна"]  ->  {category_label: {source_name: counts}}
-    Повертає список рядків, де "Категорія" показується 1 раз на блок (далі пусто).
+    region_data = day_region_category_method_source["Україна"] ->
+      {category_label: {method: {source_name: counts}}}
+
+    Повертає рядки:
+      Категорія (1 раз на блок)
+        Спосіб запису (1 раз на підблок)
+          Джерело + Взято/...
     """
     out = []
     for category_label in sorted(region_data.keys(), key=lambda x: str(x)):
-        sources = region_data.get(category_label, {})
-        first = True
-        for source_name in sorted(sources.keys(), key=lambda x: str(x)):
-            counts = sources[source_name]
-            out.append({
-                "Категорія": category_label if first else "",
-                "Джерело": source_name,
-                "Взято": counts.get("Взято", 0),
-                "Дозвон": counts.get("Дозвон", 0),
-                "ЦА": counts.get("ЦА", 0),
-                "Зацікавлені": counts.get("Зацікавлені", 0),
-                "Запис": counts.get("Запис", 0),
-            })
-            first = False
+        methods = region_data.get(category_label, {})
+        first_cat = True
+
+        for method_label in sorted(methods.keys(), key=lambda x: str(x)):
+            sources = methods.get(method_label, {})
+            first_method = True
+
+            for source_name in sorted(sources.keys(), key=lambda x: str(x)):
+                counts = sources[source_name]
+                out.append({
+                    "Категорія": category_label if first_cat else "",
+                    "Спосіб запису": method_label if first_method else "",
+                    "Джерело": source_name,
+                    "Взято": counts.get("Взято", 0),
+                    "Дозвон": counts.get("Дозвон", 0),
+                    "ЦА": counts.get("ЦА", 0),
+                    "Зацікавлені": counts.get("Зацікавлені", 0),
+                    "Запис": counts.get("Запис", 0),
+                })
+                first_cat = False
+                first_method = False
+
     return out
+
+def method_totals_table(method_totals: dict):
+    rows_out = []
+    for method in ["Дзвінок", "Повідомлення", "—"]:
+        c = method_totals.get(method, {})
+        if not c:
+            continue
+        rows_out.append({
+            "Спосіб запису": method,
+            "Взято": c.get("Взято", 0),
+            "Дозвон": c.get("Дозвон", 0),
+            "ЦА": c.get("ЦА", 0),
+            "Зацікавлені": c.get("Зацікавлені", 0),
+            "Запис": c.get("Запис", 0),
+        })
+    # якщо раптом є інші значення
+    for method in sorted(method_totals.keys(), key=lambda x: str(x)):
+        if method in {"Дзвінок", "Повідомлення", "—"}:
+            continue
+        c = method_totals.get(method, {})
+        rows_out.append({
+            "Спосіб запису": method,
+            "Взято": c.get("Взято", 0),
+            "Дозвон": c.get("Дозвон", 0),
+            "ЦА": c.get("ЦА", 0),
+            "Зацікавлені": c.get("Зацікавлені", 0),
+            "Запис": c.get("Запис", 0),
+        })
+    return rows_out
 
 # ======================================================
 # UI
@@ -817,7 +887,15 @@ if st.session_state.get("report_key") != report_key or "report" not in st.sessio
     st.info("Натисніть «Сформувати звіт», щоб завантажити дані.")
     st.stop()
 
-(total_day, total_base, day_region_category_source, rows, meta) = st.session_state["report"]
+(
+    total_day,
+    total_base,
+    day_totals_by_method,
+    base_totals_by_method,
+    day_region_category_method_source,
+    rows,
+    meta
+) = st.session_state["report"]
 
 elapsed = st.session_state.get("report_elapsed")
 if elapsed is not None:
@@ -834,6 +912,9 @@ c3.metric("ЦА", total_day["ЦА"])
 c4.metric("Зацікавлені", total_day["Зацікавлені"])
 c5.metric("Запис", total_day["Запис"])
 
+st.subheader("📞💬 День — деталізація за способом запису")
+st.dataframe(method_totals_table(day_totals_by_method), use_container_width=True)
+
 st.subheader(f"🧱 Підсумок БАЗА (пауза > {BASE_INACTIVITY_DAYS} днів)")
 b1, b2, b3, b4, b5 = st.columns(5)
 b1.metric("Взято", total_base["Взято"])
@@ -842,18 +923,21 @@ b3.metric("ЦА", total_base["ЦА"])
 b4.metric("Зацікавлені", total_base["Зацікавлені"])
 b5.metric("Запис", total_base["Запис"])
 
+st.subheader("📞💬 База — деталізація за способом запису")
+st.dataframe(method_totals_table(base_totals_by_method), use_container_width=True)
+
 st.divider()
 
 # --------------------------------------------------
 # УКРАЇНА / ЗАКОРДОН — ТАБЛИЦІ (ДЕНЬ)
 # --------------------------------------------------
 st.subheader("🇺🇦 Україна")
-ua_data = day_region_category_source.get("Україна", {})
+ua_data = day_region_category_method_source.get("Україна", {})
 ua_table = grouped_region_table(ua_data)
 st.dataframe(ua_table, use_container_width=True)
 
 st.subheader("🌍 Закордон")
-foreign_data = day_region_category_source.get("Закордон", {})
+foreign_data = day_region_category_method_source.get("Закордон", {})
 foreign_table = grouped_region_table(foreign_data)
 st.dataframe(foreign_table, use_container_width=True)
 
@@ -870,7 +954,8 @@ import csv, io
 buf = io.StringIO()
 fieldnames = [
     "Угода №", "Номер телефона", "Назва картки", "Поточний статус",
-    "Джерело (ID)", "Джерело", "Термін", "Країна номера", "Категорія", "Інстаграм сегмент",
+    "Джерело (ID)", "Джерело", "Термін", "Країна номера", "Спосіб запису",
+    "Категорія", "Інстаграм сегмент",
     "Результат", "Причина / коментар"
 ]
 w = csv.DictWriter(buf, fieldnames=fieldnames)
