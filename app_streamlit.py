@@ -1,4 +1,3 @@
-
 import requests
 import streamlit as st
 import time
@@ -59,7 +58,6 @@ APPOINTMENT_METHOD_ENUM = {
     "47065": "Повідомлення",
 }
 
-# ENUM MAP (як у вас)
 PHONE_REGION_ENUM = {
     "54065": "Україна",
     "54067": "Закордон",
@@ -104,12 +102,7 @@ def is_modified_on(date_modify: str, target_day: date) -> bool:
     return dt and to_local_date(dt) == target_day
 
 def phone_region_group_from_raw(raw) -> str:
-    """
-    ГРУПА ДЛЯ ТАБЛИЦЬ:
-    - Закордон -> "Закордон" (54067)
-    - Немає номеру / пусто -> "Україна"
-    - Україна -> "Україна"
-    """
+    # Для таблиць: Закордон -> "Закордон", решта -> "Україна"
     if raw is None:
         return "Україна"
     if isinstance(raw, list) and raw:
@@ -120,7 +113,7 @@ def phone_region_group_from_raw(raw) -> str:
     return "Україна"
 
 def phone_region_label_from_raw(raw) -> str:
-    """ЛЕЙБЛ ДЛЯ РЯДКА УГОДИ (може бути 'Немає номеру')."""
+    # Для рядка угоди: може бути "Немає номеру"
     if raw is None:
         return "Немає номеру"
     if isinstance(raw, list) and raw:
@@ -129,15 +122,16 @@ def phone_region_label_from_raw(raw) -> str:
     return PHONE_REGION_ENUM.get(val, "Немає номеру")
 
 def appointment_method_from_raw(raw) -> str:
-    """Дзвінок / Повідомлення / '—'."""
     if raw is None:
-        return "—"
+        return "Невідомо"
     if isinstance(raw, list) and raw:
         raw = raw[0]
     if isinstance(raw, dict):
         raw = raw.get("VALUE") or raw.get("value") or ""
     val = str(raw).strip()
-    return APPOINTMENT_METHOD_ENUM.get(val, "—")
+    if not val:
+        return "Невідомо"
+    return APPOINTMENT_METHOD_ENUM.get(val, f"Невідомо ({val})")
 
 # ======================================================
 # LEVELS
@@ -488,11 +482,7 @@ def fetch_contacts_phones(contact_ids: list[int]) -> dict[int, str]:
     chunk_size = 50
     for i in range(0, len(contact_ids), chunk_size):
         chunk = contact_ids[i:i + chunk_size]
-        params = {
-            "filter[ID][]": chunk,
-            "select[]": ["ID", "PHONE"],
-            "start": 0
-        }
+        params = {"filter[ID][]": chunk, "select[]": ["ID", "PHONE"], "start": 0}
         while True:
             data = b24_get("crm.contact.list", params)
             res = data.get("result", [])
@@ -635,11 +625,11 @@ def build_report(manager_id: int, target_day: date):
     total_day = empty_counts()
     total_base = empty_counts()
 
-    # Додаткова деталізація в загальній підбивці: спосіб запису
-    day_totals_by_method = defaultdict(empty_counts)   # method -> counts
-    base_totals_by_method = defaultdict(empty_counts)  # method -> counts
+    # Спосіб запису -> totals (ДЕНЬ/БАЗА)
+    day_by_method = defaultdict(empty_counts)
+    base_by_method = defaultdict(empty_counts)
 
-    # DAY таблиці: region -> category_label -> method -> source_name -> counts
+    # region -> category_label -> method -> source_name -> counts
     day_region_category_method_source = defaultdict(
         lambda: defaultdict(lambda: defaultdict(lambda: defaultdict(empty_counts)))
     )
@@ -663,11 +653,11 @@ def build_report(manager_id: int, target_day: date):
         term_text = term_text_from_raw(term_raw, term_enum_map)
 
         region_raw = d.get(PHONE_REGION_FIELD)
-        region_group = phone_region_group_from_raw(region_raw)  # Україна / Закордон
-        region_label = phone_region_label_from_raw(region_raw)  # Україна / Закордон / Немає номеру
+        region_group = phone_region_group_from_raw(region_raw)  # Україна / Закордон (для таблиць)
+        region_label = phone_region_label_from_raw(region_raw)  # Україна / Закордон / Немає номеру (для рядка угоди)
 
         method_raw = d.get(APPOINTMENT_METHOD_FIELD)
-        method_label = appointment_method_from_raw(method_raw)  # Дзвінок / Повідомлення / —
+        appointment_method = appointment_method_from_raw(method_raw)
 
         history = fetch_stagehistory(deal_id)
 
@@ -685,7 +675,7 @@ def build_report(manager_id: int, target_day: date):
         # ---------- BASE ----------
         if is_base:
             add_levels(total_base, base_levels)
-            add_levels(base_totals_by_method[method_label], base_levels)
+            add_levels(base_by_method[appointment_method], base_levels)
 
             base_counted_to = "БАЗА: " + ", ".join(LEVEL_NAMES[l] for l in sorted(base_levels))
             base_reason_text = f"Оживлення після паузи > {BASE_INACTIVITY_DAYS} днів (останній рух: {last_before_date})"
@@ -699,7 +689,7 @@ def build_report(manager_id: int, target_day: date):
                 "Джерело": source_name,
                 "Термін": term_text,
                 "Країна номера": region_label,
-                "Спосіб запису": method_label,
+                "Спосіб запису": appointment_method,
                 "Категорія": bucket,
                 "Інстаграм сегмент": insta_term,
                 "Результат": base_counted_to,
@@ -715,10 +705,10 @@ def build_report(manager_id: int, target_day: date):
 
         if day_levels:
             add_levels(total_day, day_levels)
-            add_levels(day_totals_by_method[method_label], day_levels)
+            add_levels(day_by_method[appointment_method], day_levels)
 
             add_levels(
-                day_region_category_method_source[region_group][category_label][method_label][source_name],
+                day_region_category_method_source[region_group][category_label][appointment_method][source_name],
                 day_levels
             )
 
@@ -736,7 +726,7 @@ def build_report(manager_id: int, target_day: date):
             "Джерело": source_name,
             "Термін": term_text,
             "Країна номера": region_label,
-            "Спосіб запису": method_label,
+            "Спосіб запису": appointment_method,
             "Категорія": bucket,
             "Інстаграм сегмент": insta_term,
             "Результат": counted_to,
@@ -753,8 +743,8 @@ def build_report(manager_id: int, target_day: date):
     return (
         total_day,
         total_base,
-        dict(day_totals_by_method),
-        dict(base_totals_by_method),
+        day_by_method,
+        base_by_method,
         day_region_category_method_source,
         rows,
         meta
@@ -786,30 +776,37 @@ def auth_block():
 # ======================================================
 # UI HELPERS
 # ======================================================
+def method_totals_table(d: dict):
+    out = []
+    for method_name in sorted(d.keys(), key=lambda x: str(x)):
+        counts = d[method_name]
+        out.append({
+            "Спосіб запису": method_name,
+            "Взято": counts.get("Взято", 0),
+            "Дозвон": counts.get("Дозвон", 0),
+            "ЦА": counts.get("ЦА", 0),
+            "Зацікавлені": counts.get("Зацікавлені", 0),
+            "Запис": counts.get("Запис", 0),
+        })
+    return out
+
 def grouped_region_table(region_data: dict):
     """
-    region_data = day_region_category_method_source["Україна"] ->
-      {category_label: {method: {source_name: counts}}}
-
-    Повертає рядки:
-      Категорія (1 раз на блок)
-        Спосіб запису (1 раз на підблок)
-          Джерело + Взято/...
+    region_data = day_region_category_method_source["Україна"]
+      -> {category_label: {method: {source_name: counts}}}
     """
     out = []
     for category_label in sorted(region_data.keys(), key=lambda x: str(x)):
         methods = region_data.get(category_label, {})
         first_cat = True
-
-        for method_label in sorted(methods.keys(), key=lambda x: str(x)):
-            sources = methods.get(method_label, {})
+        for method in sorted(methods.keys(), key=lambda x: str(x)):
+            sources = methods.get(method, {})
             first_method = True
-
             for source_name in sorted(sources.keys(), key=lambda x: str(x)):
                 counts = sources[source_name]
                 out.append({
                     "Категорія": category_label if first_cat else "",
-                    "Спосіб запису": method_label if first_method else "",
+                    "Спосіб запису": method if first_method else "",
                     "Джерело": source_name,
                     "Взято": counts.get("Взято", 0),
                     "Дозвон": counts.get("Дозвон", 0),
@@ -819,37 +816,7 @@ def grouped_region_table(region_data: dict):
                 })
                 first_cat = False
                 first_method = False
-
     return out
-
-def method_totals_table(method_totals: dict):
-    rows_out = []
-    for method in ["Дзвінок", "Повідомлення", "—"]:
-        c = method_totals.get(method, {})
-        if not c:
-            continue
-        rows_out.append({
-            "Спосіб запису": method,
-            "Взято": c.get("Взято", 0),
-            "Дозвон": c.get("Дозвон", 0),
-            "ЦА": c.get("ЦА", 0),
-            "Зацікавлені": c.get("Зацікавлені", 0),
-            "Запис": c.get("Запис", 0),
-        })
-    # якщо раптом є інші значення
-    for method in sorted(method_totals.keys(), key=lambda x: str(x)):
-        if method in {"Дзвінок", "Повідомлення", "—"}:
-            continue
-        c = method_totals.get(method, {})
-        rows_out.append({
-            "Спосіб запису": method,
-            "Взято": c.get("Взято", 0),
-            "Дозвон": c.get("Дозвон", 0),
-            "ЦА": c.get("ЦА", 0),
-            "Зацікавлені": c.get("Зацікавлені", 0),
-            "Запис": c.get("Запис", 0),
-        })
-    return rows_out
 
 # ======================================================
 # UI
@@ -887,15 +854,7 @@ if st.session_state.get("report_key") != report_key or "report" not in st.sessio
     st.info("Натисніть «Сформувати звіт», щоб завантажити дані.")
     st.stop()
 
-(
-    total_day,
-    total_base,
-    day_totals_by_method,
-    base_totals_by_method,
-    day_region_category_method_source,
-    rows,
-    meta
-) = st.session_state["report"]
+(total_day, total_base, day_by_method, base_by_method, day_region_category_method_source, rows, meta) = st.session_state["report"]
 
 elapsed = st.session_state.get("report_elapsed")
 if elapsed is not None:
@@ -912,9 +871,6 @@ c3.metric("ЦА", total_day["ЦА"])
 c4.metric("Зацікавлені", total_day["Зацікавлені"])
 c5.metric("Запис", total_day["Запис"])
 
-st.subheader("📞💬 День — деталізація за способом запису")
-st.dataframe(method_totals_table(day_totals_by_method), use_container_width=True)
-
 st.subheader(f"🧱 Підсумок БАЗА (пауза > {BASE_INACTIVITY_DAYS} днів)")
 b1, b2, b3, b4, b5 = st.columns(5)
 b1.metric("Взято", total_base["Взято"])
@@ -923,8 +879,16 @@ b3.metric("ЦА", total_base["ЦА"])
 b4.metric("Зацікавлені", total_base["Зацікавлені"])
 b5.metric("Запис", total_base["Запис"])
 
-st.subheader("📞💬 База — деталізація за способом запису")
-st.dataframe(method_totals_table(base_totals_by_method), use_container_width=True)
+st.divider()
+
+# --------------------------------------------------
+# СПОСІБ ЗАПИСУ — ДЕТАЛІЗАЦІЯ (ДЕНЬ/БАЗА)
+# --------------------------------------------------
+st.subheader("📞 Спосіб запису — День")
+st.dataframe(method_totals_table(day_by_method), use_container_width=True)
+
+st.subheader("📞 Спосіб запису — База")
+st.dataframe(method_totals_table(base_by_method), use_container_width=True)
 
 st.divider()
 
