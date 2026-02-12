@@ -48,20 +48,20 @@ CATEGORIES = [CAT_CRM_FGM, CAT_ONLINE, CAT_OFFLINE, CAT_CHAT_SALES, CAT_VG]
 APPOINTMENT_CATEGORIES = {CAT_ONLINE, CAT_OFFLINE, CAT_CHAT_SALES, CAT_VG}
 
 BASE_INACTIVITY_DAYS = 30
-TERM_FIELD = "UF_CRM_1749123119"  # поле "Термін" (list)
-PHONE_REGION_FIELD = "UF_CRM_1765791110365"  # поле "Номер країни" (list)
 
-# спосіб запису (list)
-APPOINT_METHOD_FIELD = "UF_CRM_1750870964613"
-APPOINT_METHOD_ENUM = {
-    "47063": "Дзвінок",
-    "47065": "Повідомлення",
-}
+TERM_FIELD = "UF_CRM_1749123119"              # "Термін" (list)
+PHONE_REGION_FIELD = "UF_CRM_1765791110365"   # "Номер країни" (list)
+BOOKING_METHOD_FIELD = "UF_CRM_1750870964613" # "Спосіб запису" (list)
 
 PHONE_REGION_ENUM = {
     "54065": "Україна",
     "54067": "Закордон",
     "54069": "Немає номеру",
+}
+
+BOOKING_METHOD_ENUM = {
+    "47063": "Дзвінок",
+    "47065": "Повідомлення",
 }
 
 # ======================================================
@@ -118,7 +118,7 @@ def phone_region_group_from_raw(raw) -> str:
     return "Україна"
 
 def phone_region_label_from_raw(raw) -> str:
-    """ЛЕЙБЛ ДЛЯ РЯДКА УГОДИ (може бути 'Немає номеру')."""
+    """Лейбл для рядка угоди (може бути 'Немає номеру')."""
     if raw is None:
         return "Немає номеру"
     if isinstance(raw, list) and raw:
@@ -126,49 +126,49 @@ def phone_region_label_from_raw(raw) -> str:
     val = str(raw).strip()
     return PHONE_REGION_ENUM.get(val, "Немає номеру")
 
-def list_value_to_str(raw) -> str:
+def booking_method_from_raw(raw) -> str:
     """
-    Нормалізує Bitrix list/uf значення до строкового ID.
-    Підтримує: None / list / dict / str|int
+    ПОВЕРТАЄ:
+    - "Дзвінок" / "Повідомлення"
+    - "" якщо поле пусте/None (без 'Невідомо')
     """
     if raw is None:
         return ""
-    if isinstance(raw, list):
-        if not raw:
-            return ""
+    if isinstance(raw, list) and raw:
         raw = raw[0]
-    if isinstance(raw, dict):
-        raw = raw.get("VALUE") or raw.get("value") or raw.get("ID") or raw.get("id") or ""
-    return str(raw).strip()
-
-def appoint_method_label_from_raw(raw) -> str:
-    vid = list_value_to_str(raw)
-    return APPOINT_METHOD_ENUM.get(vid, "Невідомо") if vid else "Невідомо"
+    val = str(raw).strip()
+    if not val:
+        return ""
+    return BOOKING_METHOD_ENUM.get(val, "")
 
 # ======================================================
 # LEVELS
 # ======================================================
 LEVEL_NAMES = {1: "Взято", 2: "Дозвон", 3: "ЦА", 4: "Зацікавлені", 5: "Запис"}
 
-FUNNEL_EXTRA = ["В дзвінку", "В повідомленнях"]
-
 def empty_counts():
-    d = {LEVEL_NAMES[i]: 0 for i in LEVEL_NAMES}
-    d["В дзвінку"] = 0
-    d["В повідомленнях"] = 0
-    return d
+    # funnel + booking columns
+    return {
+        "Взято": 0,
+        "Дозвон": 0,
+        "ЦА": 0,
+        "Зацікавлені": 0,
+        "Запис": 0,
+        "В дзвінку": 0,
+        "В повідомленнях": 0,
+    }
 
 def add_levels(counter: dict, levels: set[int]):
     for lvl in sorted(levels):
         if lvl in LEVEL_NAMES:
             counter[LEVEL_NAMES[lvl]] += 1
 
-def add_appoint_method(counter: dict, method_label: str):
-    if method_label == "Дзвінок":
+def add_booking(counter: dict, booking_method: str):
+    # booking_method: "Дзвінок"/"Повідомлення"/""
+    if booking_method == "Дзвінок":
         counter["В дзвінку"] += 1
-    elif method_label == "Повідомлення":
+    elif booking_method == "Повідомлення":
         counter["В повідомленнях"] += 1
-    # Невідомо -> не додаємо (щоб не псувати воронку)
 
 # ======================================================
 # STAGE -> LEVEL
@@ -176,29 +176,29 @@ def add_appoint_method(counter: dict, method_label: str):
 CRM_STAGE_TO_LEVEL = {
     "C59:UC_DN9449": 0,
     "C59:UC_IJZE1R": 0,
+
     "C59:NEW": 1,
     "C59:EXECUTING": 1,
     "C59:UC_25G325": 1,
     "C59:UC_G1DKQI": 1,
     "C59:UC_2118IT": 1,
+
     "C59:UC_XO1ZPS": 2,
     "C59:FINAL_INVOICE": 2,
+
     "C59:UC_XJ1V70": 3,
+
     "C59:UC_FDDLVQ": 4,
     "C59:1": 4,
     "C59:UC_PL0BXK": 4,
     "C59:UC_L3UWWD": 4,
     "C59:UC_MBXOE8": 4,
     "C59:UC_1H0IN4": 4,
+
     "C59:2": 5,
 }
 
-UNSUCCESSFUL_IGNORE = {
-    "C59:UC_QA06H6",
-    "C59:WON",
-    "C59:UC_A7YB3V",
-    "C59:15",
-}
+UNSUCCESSFUL_IGNORE = {"C59:UC_QA06H6", "C59:WON", "C59:UC_A7YB3V", "C59:15"}
 UNSUCCESSFUL_AS_TAKEN = {"C59:LOSE"}
 UNSUCCESSFUL_AS_CALL = {"C59:APOLOGY", "C59:14", "C59:16", "C59:17", "C59:18"}
 
@@ -432,7 +432,8 @@ def fetch_all_deals(manager_id: int):
         "filter[CATEGORY_ID][]": CATEGORIES,
         "select[]": [
             "ID", "TITLE", "STAGE_ID", "CATEGORY_ID", "DATE_MODIFY",
-            "CONTACT_ID", "SOURCE_ID", TERM_FIELD, PHONE_REGION_FIELD, APPOINT_METHOD_FIELD
+            "CONTACT_ID", "SOURCE_ID",
+            TERM_FIELD, PHONE_REGION_FIELD, BOOKING_METHOD_FIELD,
         ],
         "start": 0
     }
@@ -585,6 +586,7 @@ def max_levels_before_and_on_day(history_rows, target_day: date):
 
         cat = int(row.get("CATEGORY_ID", -1))
         stg = row.get("STAGE_ID", "")
+
         lvl = level_from_stage(cat, stg)
         if lvl <= 0:
             continue
@@ -647,8 +649,8 @@ def build_report(manager_id: int, target_day: date):
     total_day = empty_counts()
     total_base = empty_counts()
 
-    # DAY таблиці по країні номера:
-    # region -> category_label -> source_name -> counts
+    # ДЕНЬ таблиці по країні номера:
+    # region -> category_label -> source_name -> counts (funnel + booking)
     day_region_category_source = defaultdict(lambda: defaultdict(lambda: defaultdict(empty_counts)))
 
     ignored_no_real_stage_change = 0
@@ -673,10 +675,11 @@ def build_report(manager_id: int, target_day: date):
         region_group = phone_region_group_from_raw(region_raw)  # Україна / Закордон (для таблиць)
         region_label = phone_region_label_from_raw(region_raw)  # Україна / Закордон / Немає номеру (для рядка угоди)
 
-        appoint_method_raw = d.get(APPOINT_METHOD_FIELD)
-        appoint_method_label = appoint_method_label_from_raw(appoint_method_raw)  # Дзвінок / Повідомлення / Невідомо
+        booking_raw = d.get(BOOKING_METHOD_FIELD)
+        booking_method = booking_method_from_raw(booking_raw)   # "Дзвінок"/"Повідомлення"/""
 
         history = fetch_stagehistory(deal_id)
+
         if not has_real_stage_change_on_day(history, target_day):
             ignored_no_real_stage_change += 1
             continue
@@ -691,9 +694,8 @@ def build_report(manager_id: int, target_day: date):
         # ---------- BASE ----------
         if is_base:
             add_levels(total_base, base_levels)
-            # додаємо спосіб запису тільки якщо в base_levels є "Запис" (5)
             if 5 in base_levels:
-                add_appoint_method(total_base, appoint_method_label)
+                add_booking(total_base, booking_method)
 
             base_counted_to = "БАЗА: " + ", ".join(LEVEL_NAMES[l] for l in sorted(base_levels))
             base_reason_text = f"Оживлення після паузи > {BASE_INACTIVITY_DAYS} днів (останній рух: {last_before_date})"
@@ -709,7 +711,7 @@ def build_report(manager_id: int, target_day: date):
                 "Країна номера": region_label,
                 "Категорія": bucket,
                 "Інстаграм сегмент": insta_term,
-                "Спосіб запису": appoint_method_label,
+                "Спосіб запису": booking_method,  # "" якщо пусто
                 "Результат": base_counted_to,
                 "Причина / коментар": base_reason_text,
             })
@@ -717,19 +719,18 @@ def build_report(manager_id: int, target_day: date):
 
         # ---------- DAY ----------
         day_levels, day_reason, _, _ = levels_gained_on_day(history, target_day)
+
         counted_to = ""
         reason_text = ""
 
         if day_levels:
             add_levels(total_day, day_levels)
-
-            # агрегуємо в таблицю (Україна / Закордон)
-            add_levels(day_region_category_source[region_group][category_label][source_name], day_levels)
-
-            # додаємо спосіб запису тільки якщо "Запис" реально був отриманий сьогодні
             if 5 in day_levels:
-                add_appoint_method(total_day, appoint_method_label)
-                add_appoint_method(day_region_category_source[region_group][category_label][source_name], appoint_method_label)
+                add_booking(total_day, booking_method)
+
+            add_levels(day_region_category_source[region_group][category_label][source_name], day_levels)
+            if 5 in day_levels:
+                add_booking(day_region_category_source[region_group][category_label][source_name], booking_method)
 
             counted_to = "ДЕНЬ: " + ", ".join(LEVEL_NAMES[l] for l in sorted(day_levels))
         else:
@@ -747,7 +748,7 @@ def build_report(manager_id: int, target_day: date):
             "Країна номера": region_label,
             "Категорія": bucket,
             "Інстаграм сегмент": insta_term,
-            "Спосіб запису": appoint_method_label,
+            "Спосіб запису": booking_method,  # "" якщо пусто
             "Результат": counted_to,
             "Причина / коментар": reason_text,
         })
@@ -858,24 +859,24 @@ if elapsed is not None:
 # TOP TOTALS
 # --------------------------------------------------
 st.subheader("✅ Підсумок за день")
-c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
-c1.metric("Взято", total_day["Взято"])
-c2.metric("Дозвон", total_day["Дозвон"])
-c3.metric("ЦА", total_day["ЦА"])
-c4.metric("Зацікавлені", total_day["Зацікавлені"])
-c5.metric("Запис", total_day["Запис"])
-c6.metric("В дзвінку", total_day["В дзвінку"])
-c7.metric("В повідомленнях", total_day["В повідомленнях"])
+c = st.columns(7)
+c[0].metric("Взято", total_day["Взято"])
+c[1].metric("Дозвон", total_day["Дозвон"])
+c[2].metric("ЦА", total_day["ЦА"])
+c[3].metric("Зацікавлені", total_day["Зацікавлені"])
+c[4].metric("Запис", total_day["Запис"])
+c[5].metric("В дзвінку", total_day["В дзвінку"])
+c[6].metric("В повідомленнях", total_day["В повідомленнях"])
 
 st.subheader(f"🧱 Підсумок БАЗА (пауза > {BASE_INACTIVITY_DAYS} днів)")
-b1, b2, b3, b4, b5, b6, b7 = st.columns(7)
-b1.metric("Взято", total_base["Взято"])
-b2.metric("Дозвон", total_base["Дозвон"])
-b3.metric("ЦА", total_base["ЦА"])
-b4.metric("Зацікавлені", total_base["Зацікавлені"])
-b5.metric("Запис", total_base["Запис"])
-b6.metric("В дзвінку", total_base["В дзвінку"])
-b7.metric("В повідомленнях", total_base["В повідомленнях"])
+b = st.columns(7)
+b[0].metric("Взято", total_base["Взято"])
+b[1].metric("Дозвон", total_base["Дозвон"])
+b[2].metric("ЦА", total_base["ЦА"])
+b[3].metric("Зацікавлені", total_base["Зацікавлені"])
+b[4].metric("Запис", total_base["Запис"])
+b[5].metric("В дзвінку", total_base["В дзвінку"])
+b[6].metric("В повідомленнях", total_base["В повідомленнях"])
 
 st.divider()
 
@@ -884,13 +885,11 @@ st.divider()
 # --------------------------------------------------
 st.subheader("🇺🇦 Україна")
 ua_data = day_region_category_source.get("Україна", {})
-ua_table = grouped_region_table(ua_data)
-st.dataframe(ua_table, use_container_width=True)
+st.dataframe(grouped_region_table(ua_data), use_container_width=True)
 
 st.subheader("🌍 Закордон")
 foreign_data = day_region_category_source.get("Закордон", {})
-foreign_table = grouped_region_table(foreign_data)
-st.dataframe(foreign_table, use_container_width=True)
+st.dataframe(grouped_region_table(foreign_data), use_container_width=True)
 
 st.divider()
 
@@ -905,8 +904,9 @@ import csv, io
 buf = io.StringIO()
 fieldnames = [
     "Угода №", "Номер телефона", "Назва картки", "Поточний статус",
-    "Джерело (ID)", "Джерело", "Термін", "Країна номера", "Категорія", "Інстаграм сегмент",
-    "Спосіб запису", "Результат", "Причина / коментар"
+    "Джерело (ID)", "Джерело", "Термін", "Країна номера", "Категорія",
+    "Інстаграм сегмент", "Спосіб запису",
+    "Результат", "Причина / коментар"
 ]
 w = csv.DictWriter(buf, fieldnames=fieldnames)
 w.writeheader()
