@@ -164,7 +164,6 @@ def add_levels(counter: dict, levels: set[int]):
             counter[LEVEL_NAMES[lvl]] += 1
 
 def add_booking(counter: dict, booking_method: str):
-    # booking_method: "Дзвінок"/"Повідомлення"/""
     if booking_method == "Дзвінок":
         counter["В дзвінку"] += 1
     elif booking_method == "Повідомлення":
@@ -365,9 +364,7 @@ def source_name_from_id(source_id: str) -> str:
 def bucket_from_source(source_id: str, term_text: str, is_base: bool) -> str:
     if is_base:
         return "База"
-
     sname = source_name_from_id(source_id)
-
     if sname in INSTAGRAM_SOURCE_NAMES:
         return "Інстаграм"
     if sname in LANDING_SOURCE_NAMES:
@@ -397,7 +394,6 @@ def fetch_deal_userfield_enum_map(field_name: str) -> dict:
         res = [res]
     if not isinstance(res, list) or not res:
         return {}
-
     field = res[0] if isinstance(res[0], dict) else {}
     enum_list = field.get("LIST") or field.get("list") or []
     out = {}
@@ -437,7 +433,6 @@ def fetch_all_deals(manager_id: int):
         ],
         "start": 0
     }
-
     deals = []
     while True:
         data = b24_get("crm.deal.list", params)
@@ -458,23 +453,19 @@ def fetch_stagehistory(deal_id: int, limit: int = 2000):
         "select[]": ["CREATED_TIME", "STAGE_ID", "CATEGORY_ID"],
         "start": 0
     }
-
-    rows = []
+    hist = []
     while True:
         data = b24_get("crm.stagehistory.list", params)
         items = (data.get("result") or {}).get("items", [])
         if isinstance(items, list):
-            rows.extend(items)
-
+            hist.extend(items)
         if data.get("next") is None:
             break
         params["start"] = data["next"]
-
-        if len(rows) >= limit:
-            rows = rows[-limit:]
+        if len(hist) >= limit:
+            hist = hist[-limit:]
             break
-
-    return rows
+    return hist
 
 # ======================================================
 # CONTACT PHONES
@@ -497,7 +488,6 @@ def fetch_contacts_phones(contact_ids: list[int]) -> dict[int, str]:
     contact_ids = sorted(set(contact_ids))
     if not contact_ids:
         return {}
-
     phones = {}
     chunk_size = 50
     for i in range(0, len(contact_ids), chunk_size):
@@ -538,7 +528,6 @@ def last_stage_key_before_day(history_rows, target_day: date):
 
 def has_real_stage_change_on_day(history_rows, target_day: date) -> bool:
     _, prev_key = last_stage_key_before_day(history_rows, target_day)
-
     if prev_key is None:
         for row in history_rows:
             dt = parse_dt(row.get("CREATED_TIME"))
@@ -578,39 +567,31 @@ def max_levels_before_and_on_day(history_rows, target_day: date):
     max_before = 0
     max_today = 0
     had_today = False
-
     for row in history_rows:
         dt = parse_dt(row.get("CREATED_TIME"))
         if not dt:
             continue
-
         cat = int(row.get("CATEGORY_ID", -1))
         stg = row.get("STAGE_ID", "")
-
         lvl = level_from_stage(cat, stg)
         if lvl <= 0:
             continue
-
         d = to_local_date(dt)
         if d is None:
             continue
-
         if d < target_day:
             max_before = max(max_before, lvl)
         elif d == target_day:
             had_today = True
             max_today = max(max_today, lvl)
-
     return had_today, max_before, max_today
 
 def levels_gained_on_day(history_rows, target_day: date):
     had_today, max_before, max_today = max_levels_before_and_on_day(history_rows, target_day)
-
     if not had_today:
         return set(), "Не було змін статусів у цей день", max_before, max_today
     if max_today <= max_before:
         return set(), "Статус не піднявся вище (повторна робота)", max_before, max_today
-
     return set(range(max_before + 1, max_today + 1)), "OK", max_before, max_today
 
 def levels_for_base_report(history_rows, target_day: date):
@@ -662,6 +643,7 @@ def build_report(manager_id: int, target_day: date):
         title = d.get("TITLE", "—")
         cat_now = int(d.get("CATEGORY_ID", -1))
         stage_now = d.get("STAGE_ID", "")
+
         contact_id = int(d.get("CONTACT_ID") or 0)
         phone = phones_map.get(contact_id, "")
 
@@ -679,7 +661,6 @@ def build_report(manager_id: int, target_day: date):
         booking_method = booking_method_from_raw(booking_raw)   # "Дзвінок"/"Повідомлення"/""
 
         history = fetch_stagehistory(deal_id)
-
         if not has_real_stage_change_on_day(history, target_day):
             ignored_no_real_stage_change += 1
             continue
