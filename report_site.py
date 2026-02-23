@@ -416,7 +416,17 @@ def build_report_site(
     fetch_deal_userfield_enum_map,      # передай з основного файлу
 ):
     all_deals = fetch_all_deals_site(WEBHOOK_URL, manager_id, TERM_FIELD, PHONE_REGION_FIELD, BOOKING_METHOD_FIELD)
-    deals_day = [d for d in all_deals if is_modified_on(d.get("DATE_MODIFY", ""), target_day, LOCAL_TZ_NAME, ZoneInfo)]
+    deals_day = []
+    for d in all_deals:
+        if is_modified_on(d.get("DATE_MODIFY", ""), target_day, LOCAL_TZ_NAME, ZoneInfo):
+            deals_day.append(d)
+            continue
+
+        # fallback для redirect
+        if int(d.get("CATEGORY_ID", -1)) == CAT_REDIRECT:
+            history = fetch_stagehistory(WEBHOOK_URL, int(d["ID"]))
+            if has_real_stage_change_on_day(history, target_day, LOCAL_TZ_NAME, ZoneInfo):
+                deals_day.append(d)
 
     contact_ids = []
     for d in deals_day:
