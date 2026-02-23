@@ -244,6 +244,7 @@ def max_levels_before_and_on_day(history_rows, target_day: date, LOCAL_TZ_NAME: 
     max_before = 0
     max_today = 0
     had_today = False
+    had_appointment_today = False   # <--- НОВЕ
 
     for row in history_rows:
         dt = parse_dt(row.get("CREATED_TIME"))
@@ -253,12 +254,19 @@ def max_levels_before_and_on_day(history_rows, target_day: date, LOCAL_TZ_NAME: 
         cat = int(row.get("CATEGORY_ID", -1))
         stg = row.get("STAGE_ID", "")
 
-        lvl = level_from_stage_site(cat, stg)
-        if lvl <= 0:
-            continue
-
         d = to_local_date(dt, LOCAL_TZ_NAME, ZoneInfo)
         if d is None:
+            continue
+
+        # якщо цього дня угода попала в appointment funnel — це автоматично "Запис"
+        if d == target_day and cat in APPOINTMENT_CATEGORIES:
+            had_today = True
+            had_appointment_today = True
+            max_today = max(max_today, 5)
+            continue
+
+        lvl = level_from_stage_site(cat, stg)
+        if lvl <= 0:
             continue
 
         if d < target_day:
