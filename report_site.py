@@ -19,6 +19,7 @@ CAT_ONLINE = 61
 CAT_OFFLINE = 63
 CAT_CHAT_SALES = 57
 CAT_VG = 41
+CAT_REDIRECT = 65
 APPOINTMENT_CATEGORIES = {CAT_ONLINE, CAT_OFFLINE, CAT_CHAT_SALES, CAT_VG}
 
 # -------------------------
@@ -302,7 +303,7 @@ def levels_for_base_report(history_rows, target_day: date, BASE_INACTIVITY_DAYS:
 def fetch_all_deals_site(WEBHOOK_URL: str, manager_id: int, TERM_FIELD: str, PHONE_REGION_FIELD: str, BOOKING_METHOD_FIELD: str):
     params = {
         "filter[ASSIGNED_BY_ID]": manager_id,
-        "filter[CATEGORY_ID][]": [CAT_SITE, CAT_ONLINE, CAT_OFFLINE, CAT_CHAT_SALES, CAT_VG],
+        "filter[CATEGORY_ID][]": [CAT_SITE, CAT_ONLINE, CAT_OFFLINE, CAT_CHAT_SALES, CAT_VG, CAT_REDIRECT],
         "select[]": [
             "ID", "TITLE", "STAGE_ID", "CATEGORY_ID", "DATE_MODIFY",
             "CONTACT_ID", "SOURCE_ID",
@@ -450,6 +451,16 @@ def build_report_site(
         booking_method = booking_method_from_raw(booking_raw, BOOKING_METHOD_ENUM)  # "Дзвінок"/"Повідомлення"/""
 
         history = fetch_stagehistory(WEBHOOK_URL, deal_id)
+
+        # ===============================
+        # SIMPLE REDIRECT 65
+        # ===============================
+        if cat_now == CAT_REDIRECT and is_modified_on(d.get("DATE_MODIFY",""), target_day, LOCAL_TZ_NAME, ZoneInfo):
+
+            total_day["Взято"] += 1
+            total_day["Дозвон"] += 1
+
+            continue
 
         if not has_real_stage_change_on_day(history, target_day, LOCAL_TZ_NAME, ZoneInfo):
             ignored_no_real_stage_change += 1
