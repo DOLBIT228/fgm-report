@@ -471,9 +471,10 @@ def build_report_site(
         history = fetch_stagehistory(WEBHOOK_URL, deal_id)
 
         # ===============================
-        # REDIRECT 65 → Взято + Дозвон
+        # SIMPLE REDIRECT 65 → Взято + Дозвон
         # ===============================
-        if cat_now == CAT_REDIRECT and has_real_stage_change_on_day(history, target_day, LOCAL_TZ_NAME, ZoneInfo):
+        if cat_now == CAT_REDIRECT and is_modified_on(d.get("DATE_MODIFY",""), target_day, LOCAL_TZ_NAME, ZoneInfo):
+
             total_day["Взято"] += 1
             total_day["Дозвон"] += 1
 
@@ -482,15 +483,7 @@ def build_report_site(
 
             rows.append({
                 "Угода №": deal_id,
-                "Номер телефона": phone,
-                "Назва картки": title,
-                "Поточний статус": f"{cat_now}:{stage_now}",
-                "Джерело (ID)": source_id,
-                "Джерело": source_name,
-                "Термін": term_text,
-                "Країна номера": region_label,
                 "Категорія": "Передано",
-                "Спосіб запису": "",
                 "Результат": "ДЕНЬ: Взято, Дозвон",
                 "Причина / коментар": "Передано у воронку 65",
             })
