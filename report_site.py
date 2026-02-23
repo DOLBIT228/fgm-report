@@ -19,7 +19,7 @@ CAT_ONLINE = 61
 CAT_OFFLINE = 63
 CAT_CHAT_SALES = 57
 CAT_VG = 41
-CAT_REDIRECT = 65
+CAT_REDIRECT = 65   # ← ДОДАНО
 APPOINTMENT_CATEGORIES = {CAT_ONLINE, CAT_OFFLINE, CAT_CHAT_SALES, CAT_VG}
 
 # -------------------------
@@ -245,6 +245,7 @@ def max_levels_before_and_on_day(history_rows, target_day: date, LOCAL_TZ_NAME: 
     max_before = 0
     max_today = 0
     had_today = False
+    had_appointment_today = False   # <--- НОВЕ
 
     for row in history_rows:
         dt = parse_dt(row.get("CREATED_TIME"))
@@ -261,6 +262,7 @@ def max_levels_before_and_on_day(history_rows, target_day: date, LOCAL_TZ_NAME: 
         # якщо цього дня угода попала в appointment funnel — це автоматично "Запис"
         if d == target_day and cat in APPOINTMENT_CATEGORIES:
             had_today = True
+            had_appointment_today = True
             max_today = max(max_today, 5)
             continue
 
@@ -458,17 +460,16 @@ def build_report_site(
 
         history = fetch_stagehistory(WEBHOOK_URL, deal_id)
 
-        # -------------------------------------------------
-        # REDIRECT TO 65 = Взято + Дозвон (без іншої логіки)
-        # -------------------------------------------------
+        # ===============================
+        # REDIRECT 65 → Взято + Дозвон
+        # ===============================
         if cat_now == CAT_REDIRECT and has_real_stage_change_on_day(history, target_day, LOCAL_TZ_NAME, ZoneInfo):
-
             total_day["Взято"] += 1
             total_day["Дозвон"] += 1
-        
+
             day_region_category_source[region_group]["Передано"]["Передано"]["Взято"] += 1
             day_region_category_source[region_group]["Передано"]["Передано"]["Дозвон"] += 1
-        
+
             rows.append({
                 "Угода №": deal_id,
                 "Номер телефона": phone,
@@ -483,7 +484,11 @@ def build_report_site(
                 "Результат": "ДЕНЬ: Взято, Дозвон",
                 "Причина / коментар": "Передано у воронку 65",
             })
-        
+
+            continue
+
+        if not has_real_stage_change_on_day(history, target_day, LOCAL_TZ_NAME, ZoneInfo):
+            ignored_no_real_stage_change += 1
             continue
 
         base_levels, base_reason, last_before_date, _ = levels_for_base_report(
