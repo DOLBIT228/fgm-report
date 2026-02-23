@@ -305,7 +305,7 @@ def fetch_all_deals_site(WEBHOOK_URL: str, manager_id: int, TERM_FIELD: str, PHO
         "filter[ASSIGNED_BY_ID]": manager_id,
         "filter[CATEGORY_ID][]": [CAT_SITE, CAT_ONLINE, CAT_OFFLINE, CAT_CHAT_SALES, CAT_VG, CAT_REDIRECT],
         "select[]": [
-            "ID", "TITLE", "STAGE_ID", "CATEGORY_ID", "DATE_MODIFY",
+            "ID", "TITLE", "STAGE_ID", "CATEGORY_ID", "ORIGIN_CATEGORY_ID", "DATE_MODIFY",
             "CONTACT_ID", "SOURCE_ID",
             TERM_FIELD, PHONE_REGION_FIELD, BOOKING_METHOD_FIELD,
         ],
@@ -433,6 +433,13 @@ def build_report_site(
         deal_id = int(d.get("ID"))
         title = d.get("TITLE", "—")
         cat_now = int(d.get("CATEGORY_ID", -1))
+
+        origin_cat = int(d.get("ORIGIN_CATEGORY_ID") or 0)
+
+        # беремо ТІЛЬКИ угоди, що стартували з сайту
+        if origin_cat != CAT_SITE:
+            continue
+
         stage_now = d.get("STAGE_ID", "")
         contact_id = int(d.get("CONTACT_ID") or 0)
         phone = phones_map.get(contact_id, "")
