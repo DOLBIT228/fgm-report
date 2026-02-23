@@ -245,7 +245,6 @@ def max_levels_before_and_on_day(history_rows, target_day: date, LOCAL_TZ_NAME: 
     max_before = 0
     max_today = 0
     had_today = False
-    had_appointment_today = False   # <--- НОВЕ
 
     for row in history_rows:
         dt = parse_dt(row.get("CREATED_TIME"))
@@ -463,8 +462,8 @@ def build_report_site(
         # -------------------------------------------------
         # REDIRECT TO 65 = Взято + Дозвон (без іншої логіки)
         # -------------------------------------------------
-        if cat_now == CAT_REDIRECT:
-        
+        if cat_now == CAT_REDIRECT and has_real_stage_change_on_day(history, target_day, LOCAL_TZ_NAME, ZoneInfo):
+
             total_day["Взято"] += 1
             total_day["Дозвон"] += 1
         
