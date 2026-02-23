@@ -452,9 +452,20 @@ def build_report_site(
 
         history = fetch_stagehistory(WEBHOOK_URL, deal_id)
 
-        # ===============================
-        # SIMPLE REDIRECT 65
-        # ===============================
+        # =====================================
+        # FINAL FUNNEL TRANSFERS (by CATEGORY)
+        # =====================================
+
+        # Appointment funnels = Запис
+        if cat_now in APPOINTMENT_CATEGORIES and is_modified_on(d.get("DATE_MODIFY",""), target_day, LOCAL_TZ_NAME, ZoneInfo):
+
+            total_day["Взято"] += 1
+            total_day["Дозвон"] += 1
+            total_day["Запис"] += 1
+
+            continue
+
+        # Redirect funnel = Взято + Дозвон
         if cat_now == CAT_REDIRECT and is_modified_on(d.get("DATE_MODIFY",""), target_day, LOCAL_TZ_NAME, ZoneInfo):
 
             total_day["Взято"] += 1
