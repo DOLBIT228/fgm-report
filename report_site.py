@@ -19,7 +19,6 @@ CAT_ONLINE = 61
 CAT_OFFLINE = 63
 CAT_CHAT_SALES = 57
 CAT_VG = 41
-CAT_REDIRECT = 65
 APPOINTMENT_CATEGORIES = {CAT_ONLINE, CAT_OFFLINE, CAT_CHAT_SALES, CAT_VG}
 
 # -------------------------
@@ -303,9 +302,9 @@ def levels_for_base_report(history_rows, target_day: date, BASE_INACTIVITY_DAYS:
 def fetch_all_deals_site(WEBHOOK_URL: str, manager_id: int, TERM_FIELD: str, PHONE_REGION_FIELD: str, BOOKING_METHOD_FIELD: str):
     params = {
         "filter[ASSIGNED_BY_ID]": manager_id,
-        "filter[CATEGORY_ID][]": [CAT_SITE, CAT_ONLINE, CAT_OFFLINE, CAT_CHAT_SALES, CAT_VG, CAT_REDIRECT],
+        "filter[CATEGORY_ID][]": [CAT_SITE, CAT_ONLINE, CAT_OFFLINE, CAT_CHAT_SALES, CAT_VG],
         "select[]": [
-            "ID", "TITLE", "STAGE_ID", "CATEGORY_ID", "ORIGIN_CATEGORY_ID", "DATE_MODIFY",
+            "ID", "TITLE", "STAGE_ID", "CATEGORY_ID", "DATE_MODIFY",
             "CONTACT_ID", "SOURCE_ID",
             TERM_FIELD, PHONE_REGION_FIELD, BOOKING_METHOD_FIELD,
         ],
@@ -433,13 +432,6 @@ def build_report_site(
         deal_id = int(d.get("ID"))
         title = d.get("TITLE", "—")
         cat_now = int(d.get("CATEGORY_ID", -1))
-
-        origin_cat = int(d.get("ORIGIN_CATEGORY_ID") or 0)
-
-        # беремо ТІЛЬКИ угоди, що стартували з сайту
-        if origin_cat != CAT_SITE:
-            continue
-
         stage_now = d.get("STAGE_ID", "")
         contact_id = int(d.get("CONTACT_ID") or 0)
         phone = phones_map.get(contact_id, "")
@@ -458,27 +450,6 @@ def build_report_site(
         booking_method = booking_method_from_raw(booking_raw, BOOKING_METHOD_ENUM)  # "Дзвінок"/"Повідомлення"/""
 
         history = fetch_stagehistory(WEBHOOK_URL, deal_id)
-
-        # =====================================
-        # FINAL FUNNEL TRANSFERS (by CATEGORY)
-        # =====================================
-
-        # Appointment funnels = Запис
-        if cat_now in APPOINTMENT_CATEGORIES and is_modified_on(d.get("DATE_MODIFY",""), target_day, LOCAL_TZ_NAME, ZoneInfo):
-
-            total_day["Взято"] += 1
-            total_day["Дозвон"] += 1
-            total_day["Запис"] += 1
-
-            continue
-
-        # Redirect funnel = Взято + Дозвон
-        if cat_now == CAT_REDIRECT and is_modified_on(d.get("DATE_MODIFY",""), target_day, LOCAL_TZ_NAME, ZoneInfo):
-
-            total_day["Взято"] += 1
-            total_day["Дозвон"] += 1
-
-            continue
 
         if not has_real_stage_change_on_day(history, target_day, LOCAL_TZ_NAME, ZoneInfo):
             ignored_no_real_stage_change += 1
