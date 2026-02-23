@@ -461,7 +461,7 @@ def build_report_site(
         # -------------------------------------------------
         # REDIRECT TO 65 = Взято + Дозвон (без іншої логіки)
         # -------------------------------------------------
-        if cat_now == CAT_REDIRECT:
+        if cat_now == CAT_REDIRECT and has_real_stage_change_on_day(history, target_day, LOCAL_TZ_NAME, ZoneInfo):
 
             total_day["Взято"] += 1
             total_day["Дозвон"] += 1
