@@ -687,11 +687,7 @@ def build_report(manager_id: int, target_day: date):
         base_levels, base_reason, last_before_date, _ = levels_for_base_report(history, target_day)
         is_base = (base_reason == "BASE_OK" and bool(base_levels))
 
-        # --- FORCE SITE 47 ---
-        if cat_now == 47:
-            bucket = "Сайт"
-        else:
-            bucket = bucket_from_source(source_id, term_text, is_base)
+        bucket = bucket_from_source(source_id, term_text, is_base)
         insta_term = instagram_term_segment(term_text) if bucket == "Інстаграм" else ""
         category_label = f"Інстаграм {insta_term}" if (bucket == "Інстаграм" and insta_term) else bucket
 
