@@ -1,68 +1,126 @@
-# report_site_47.py
 import requests
 from datetime import datetime, date, timedelta
 from collections import Counter, defaultdict
 
-# -------------------------
-# CONFIG (передай з основного файлу)
-# -------------------------
-# WEBHOOK_URL, LOCAL_TZ_NAME, ZoneInfo
-# TERM_FIELD, PHONE_REGION_FIELD, BOOKING_METHOD_FIELD
-# PHONE_REGION_ENUM, BOOKING_METHOD_ENUM
-# BASE_INACTIVITY_DAYS
+try:
+    from zoneinfo import ZoneInfo  # Python 3.9+
+except Exception:
+    ZoneInfo = None
 
-# -------------------------
-# CATEGORY (Site funnel)
-# -------------------------
+
+# =========================
+# Constants for SITE funnel
+# =========================
 CAT_SITE = 47
+
+# Appointment categories (treated as "Запис")
 CAT_ONLINE = 61
 CAT_OFFLINE = 63
 CAT_CHAT_SALES = 57
 CAT_VG = 41
-CAT_REDIRECT = 65
 APPOINTMENT_CATEGORIES = {CAT_ONLINE, CAT_OFFLINE, CAT_CHAT_SALES, CAT_VG}
 
-# -------------------------
-# LEVELS
-# -------------------------
+BASE_INACTIVITY_DAYS = 30
+
 LEVEL_NAMES = {1: "Взято", 2: "Дозвон", 3: "ЦА", 4: "Зацікавлені", 5: "Запис"}
 
+
 def empty_counts():
-    return {
-        "Взято": 0,
-        "Дозвон": 0,
-        "ЦА": 0,
-        "Зацікавлені": 0,
-        "Запис": 0,
-        "В дзвінку": 0,
-        "В повідомленнях": 0,
-    }
+    return {LEVEL_NAMES[i]: 0 for i in LEVEL_NAMES}
+
 
 def add_levels(counter: dict, levels: set[int]):
     for lvl in sorted(levels):
         if lvl in LEVEL_NAMES:
             counter[LEVEL_NAMES[lvl]] += 1
 
-def add_booking(counter: dict, booking_method: str):
-    if booking_method == "Дзвінок":
-        counter["В дзвінку"] += 1
-    elif booking_method == "Повідомлення":
-        counter["В повідомленнях"] += 1
 
-# -------------------------
-# HELPERS (потрібні для build_report_site)
-# -------------------------
-def _norm(s: str) -> str:
-    return (s or "").strip().casefold()
+# =========================
+# Stage mapping (CAT 47)
+# =========================
+# Логіка підрахунку:
+# 1. Взято = Розсилка > Не дозвон (окремо Немає в месенджерах)
+# 2. Дозвон = Додзвон (окремо Не ЦА, Угода провалена, Придбали, Не в пошуках обручок)
+# 3. ЦА = ЦА
+# 4. Зацікавлені = Зацікавлені > Очікуємо бронювання
+# 5. Запис = Запланована консультація > Онлайн/Офлайн/Чат продаж/ВГ (через CATEGORY)
 
-def b24_get(WEBHOOK_URL: str, method: str, params=None) -> dict:
-    url = f"{WEBHOOK_URL}{method}"
+SITE_STAGE_TO_LEVEL = {
+    # 0) не рахуємо
+    "C47:NEW": 0,  # Новий
+
+    # 1) Взято
+    "C47:PREPARATION": 1,   # Розсилка
+    "C47:EXECUTING": 1,     # не додзвон
+    "C47:UC_D56N3S": 1,     # Немає в месенджерах
+
+    # 2) Дозвон
+    "C47:UC_3PMDY3": 2,     # Додзвон
+    "C47:UC_GVG7E9": 2,     # Не ЦА
+    "C47:LOSE": 2,          # Угода провалена
+    "C47:UC_KOEVQT": 2,     # Придбали
+    "C47:UC_0TGJPJ": 2,     # Не в пошуках обручок
+
+    # 3) ЦА
+    "C47:UC_U7J18A": 3,     # ЦА
+
+    # 4) Зацікавлені
+    "C47:UC_X314BU": 4,     # Зацікавлені
+    "C47:UC_RYMD4E": 4,     # Очікуємо бронювання
+
+    # 5) Запис (у воронці)
+    "C47:UC_K9ZT4D": 5,     # Запланована консультація
+
+    # Не рахуємо
+    "C47:UC_DBKQMB": 0,     # Подвійні
+    "C47:WON": 0,           # Успішна угода
+    "C47:PREPAYMENT_INVOIC": 0,  # 2 дзвінок (не в рівнях)
+    "C47:UC_FN3M0F": 0,          # 3 дзвінок (не в рівнях)
+}
+
+
+def level_from_stage(category_id: int, stage_id: str) -> int:
+    if category_id == CAT_SITE:
+        return SITE_STAGE_TO_LEVEL.get(stage_id, 0)
+    if category_id in APPOINTMENT_CATEGORIES:
+        return 5
+    return 0
+
+
+# =========================
+# Sources mapping for SITE
+# =========================
+# SITE category: SOURCE_ID == "24" (Лендинг) -> bucket "Сайт"
+# Landing category: specific landing sources -> bucket "Лендинг"
+
+SOURCE_SITE = "24"  # Лендинг (основний сайт) -> bucket "Сайт"
+
+LANDING_SOURCES = {
+    "UC_JL9RSA", "UC_9FJEWZ", "UC_WEFXCG", "34", "35", "UC_61JD9N"
+}
+
+
+def site_bucket_from_source(source_id: str) -> str:
+    s = (source_id or "").strip()
+    if s == SOURCE_SITE:
+        return "Сайт"
+    if s in LANDING_SOURCES:
+        return "Лендинг"
+    return "Інше"
+
+
+# =========================
+# Bitrix helpers
+# =========================
+def b24_get(webhook_url: str, method: str, params=None) -> dict:
+    url = f"{webhook_url}{method}"
     r = requests.get(url, params=params or {}, timeout=30)
     r.raise_for_status()
     data = r.json()
     if "error" in data:
         raise RuntimeError(f"{data['error']}: {data.get('error_description')}")
     return data
+
 
 def parse_dt(value: str):
     if not value:
@@ -75,246 +133,34 @@ def parse_dt(value: str):
         except Exception:
             return None
 
-def to_local_date(dt: datetime, LOCAL_TZ_NAME: str, ZoneInfo):
+
+def to_local_date(dt: datetime, local_tz_name: str):
     if not dt:
         return None
     if ZoneInfo is None or dt.tzinfo is None:
         return dt.date()
-    return dt.astimezone(ZoneInfo(LOCAL_TZ_NAME)).date()
+    return dt.astimezone(ZoneInfo(local_tz_name)).date()
 
-def is_modified_on(date_modify: str, target_day: date, LOCAL_TZ_NAME: str, ZoneInfo) -> bool:
+
+def is_modified_on(date_modify: str, target_day: date, local_tz_name: str) -> bool:
     dt = parse_dt(date_modify)
-    return dt and to_local_date(dt, LOCAL_TZ_NAME, ZoneInfo) == target_day
+    return dt and to_local_date(dt, local_tz_name) == target_day
 
-def phone_region_group_from_raw(raw) -> str:
-    # Закордон -> "Закордон", інше/пусто -> "Україна"
-    if raw is None:
-        return "Україна"
-    if isinstance(raw, list) and raw:
-        raw = raw[0]
-    val = str(raw).strip()
-    if val == "54067":
-        return "Закордон"
-    return "Україна"
 
-def phone_region_label_from_raw(raw, PHONE_REGION_ENUM: dict) -> str:
-    if raw is None:
-        return "Немає номеру"
-    if isinstance(raw, list) and raw:
-        raw = raw[0]
-    val = str(raw).strip()
-    return PHONE_REGION_ENUM.get(val, "Немає номеру")
-
-def booking_method_from_raw(raw, BOOKING_METHOD_ENUM: dict) -> str:
-    # "" якщо пусто/None
-    if raw is None:
-        return ""
-    if isinstance(raw, list) and raw:
-        raw = raw[0]
-    val = str(raw).strip()
-    if not val:
-        return ""
-    return BOOKING_METHOD_ENUM.get(val, "")
-
-# -------------------------
-# STAGE -> LEVEL (воронка 47)
-# -------------------------
-SITE_STAGE_TO_LEVEL = {
-    # NEW = 0
-    "C47:NEW": 0,
-
-    # Взято: Розсилка > не додзвон (+ Немає в месенджерах)
-    "C47:PREPARATION": 1,        # Розсилка
-    "C47:PREPAYMENT_INVOIC": 1,  # 2 дзвінок
-    "C47:UC_FN3M0F": 1,          # 3 дзвінок
-    "C47:EXECUTING": 1,          # не додзвон
-    "C47:UC_D56N3S": 1,          # Немає в месенджерах
-
-    # Дозвон (в т.ч. спец-статуси)
-    "C47:UC_3PMDY3": 2,          # Додзвон
-    "C47:UC_GVG7E9": 2,          # Не ЦА
-    "C47:LOSE": 2,               # Угода провалена
-    "C47:UC_KOEVQT": 2,          # Придбали
-    "C47:UC_0TGJPJ": 2,          # Не в пошуках обручок
-
-    # ЦА
-    "C47:UC_U7J18A": 3,
-
-    # Зацікавлені > Очікуємо бронювання
-    "C47:UC_X314BU": 4,
-    "C47:UC_RYMD4E": 4,
-
-    # Запис
-    "C47:UC_K9ZT4D": 5,          # Запланована консультація
-    "C47:WON": 5,                # Успішна угода (якщо хочете рахувати як запис)
-}
-
-def level_from_stage_site(category_id: int, stage_id: str) -> int:
-    if category_id == CAT_SITE:
-        return SITE_STAGE_TO_LEVEL.get(stage_id, 0)
-    if category_id in APPOINTMENT_CATEGORIES:
-        return 5
-    return 0
-
-# -------------------------
-# SOURCES / BUCKETS (для Сайт 47)
-# -------------------------
-SOURCE_ID_TO_NAME_SITE = {
-    "24": "Лендинг",          # Сайт (bucket=Сайт)
-    "UC_JL9RSA": "Лендинг -2=1",
-    "UC_9FJEWZ": "Лендинг 1 грам",
-    "UC_WEFXCG": "Лендинг Каблучки 100$",
-    "34": "Лендинг Каблучки 1 грам",
-    "35": "Лендинг 2 за 1 ОФФЕР",
-    "UC_61JD9N": "Лендинг - стара ціна 2025",
-}
-
-LANDING_VARIANTS_IDS = {
-    "UC_JL9RSA", "UC_9FJEWZ", "UC_WEFXCG", "34", "35", "UC_61JD9N"
-}
-
-def source_name_from_id_site(source_id: str) -> str:
-    sid = str(source_id or "").strip()
-    return SOURCE_ID_TO_NAME_SITE.get(sid, sid or "Без джерела")
-
-def bucket_from_source_site(source_id: str) -> str:
-    sid = str(source_id or "").strip()
-    if sid == "24":
-        return "Сайт"
-    if sid in LANDING_VARIANTS_IDS:
-        return "Лендинг"
-    return "Інше"
-
-# -------------------------
-# STAGEHISTORY ANALYSIS (як у вас, але з level_from_stage_site)
-# -------------------------
-def last_stage_key_before_day(history_rows, target_day: date, LOCAL_TZ_NAME: str, ZoneInfo):
-    last_dt = None
-    last_key = None
-    for row in history_rows:
-        dt = parse_dt(row.get("CREATED_TIME"))
-        if not dt:
-            continue
-        d = to_local_date(dt, LOCAL_TZ_NAME, ZoneInfo)
-        if d is None or d >= target_day:
-            continue
-        if last_dt is None or dt > last_dt:
-            last_dt = dt
-            last_key = (int(row.get("CATEGORY_ID", -1)), row.get("STAGE_ID", ""))
-    return last_dt, last_key
-
-def has_real_stage_change_on_day(history_rows, target_day: date, LOCAL_TZ_NAME: str, ZoneInfo) -> bool:
-    _, prev_key = last_stage_key_before_day(history_rows, target_day, LOCAL_TZ_NAME, ZoneInfo)
-
-    if prev_key is None:
-        for row in history_rows:
-            dt = parse_dt(row.get("CREATED_TIME"))
-            if not dt:
-                continue
-            if to_local_date(dt, LOCAL_TZ_NAME, ZoneInfo) == target_day:
-                return True
-        return False
-
-    for row in history_rows:
-        dt = parse_dt(row.get("CREATED_TIME"))
-        if not dt:
-            continue
-        if to_local_date(dt, LOCAL_TZ_NAME, ZoneInfo) != target_day:
-            continue
-        key = (int(row.get("CATEGORY_ID", -1)), row.get("STAGE_ID", ""))
-        if key != prev_key:
-            return True
-
-    return False
-
-def last_stage_change_before_day(history_rows, target_day: date, LOCAL_TZ_NAME: str, ZoneInfo):
-    last_dt = None
-    for row in history_rows:
-        dt = parse_dt(row.get("CREATED_TIME"))
-        if not dt:
-            continue
-        d = to_local_date(dt, LOCAL_TZ_NAME, ZoneInfo)
-        if d is None:
-            continue
-        if d < target_day:
-            if last_dt is None or dt > last_dt:
-                last_dt = dt
-    return last_dt
-
-def max_levels_before_and_on_day(history_rows, target_day: date, LOCAL_TZ_NAME: str, ZoneInfo):
-    max_before = 0
-    max_today = 0
-    had_today = False
-
-    for row in history_rows:
-        dt = parse_dt(row.get("CREATED_TIME"))
-        if not dt:
-            continue
-
-        cat = int(row.get("CATEGORY_ID", -1))
-        stg = row.get("STAGE_ID", "")
-
-        lvl = level_from_stage_site(cat, stg)
-        if lvl <= 0:
-            continue
-
-        d = to_local_date(dt, LOCAL_TZ_NAME, ZoneInfo)
-        if d is None:
-            continue
-
-        if d < target_day:
-            max_before = max(max_before, lvl)
-        elif d == target_day:
-            had_today = True
-            max_today = max(max_today, lvl)
-
-    return had_today, max_before, max_today
-
-def levels_gained_on_day(history_rows, target_day: date, LOCAL_TZ_NAME: str, ZoneInfo):
-    had_today, max_before, max_today = max_levels_before_and_on_day(history_rows, target_day, LOCAL_TZ_NAME, ZoneInfo)
-
-    if not had_today:
-        return set(), "Не було змін статусів у цей день", max_before, max_today
-    if max_today <= max_before:
-        return set(), "Статус не піднявся вище (повторна робота)", max_before, max_today
-
-    return set(range(max_before + 1, max_today + 1)), "OK", max_before, max_today
-
-def levels_for_base_report(history_rows, target_day: date, BASE_INACTIVITY_DAYS: int, LOCAL_TZ_NAME: str, ZoneInfo):
-    cutoff = target_day - timedelta(days=BASE_INACTIVITY_DAYS)
-
-    last_before = last_stage_change_before_day(history_rows, target_day, LOCAL_TZ_NAME, ZoneInfo)
-    if not last_before:
-        return set(), "База: немає історії до цього дня", None, 0
-
-    last_before_date = to_local_date(last_before, LOCAL_TZ_NAME, ZoneInfo)
-    if last_before_date is None or last_before_date > cutoff:
-        return set(), "База: не було паузи > 30 днів", last_before_date, 0
-
-    had_today, _, max_today = max_levels_before_and_on_day(history_rows, target_day, LOCAL_TZ_NAME, ZoneInfo)
-    if not had_today or max_today <= 0:
-        return set(), "База: у цей день не було статусного руху", last_before_date, max_today
-
-    return set(range(1, max_today + 1)), "BASE_OK", last_before_date, max_today
-
-# -------------------------
-# FETCH
-# -------------------------
-def fetch_all_deals_site(WEBHOOK_URL: str, manager_id: int, TERM_FIELD: str, PHONE_REGION_FIELD: str, BOOKING_METHOD_FIELD: str):
+# =========================
+# Fetch deals + stagehistory
+# =========================
+def fetch_all_deals(webhook_url: str, manager_id: int):
     params = {
         "filter[ASSIGNED_BY_ID]": manager_id,
-        "filter[CATEGORY_ID][]": [CAT_SITE, CAT_ONLINE, CAT_OFFLINE, CAT_CHAT_SALES, CAT_VG, CAT_REDIRECT],
-        "select[]": [
-            "ID", "TITLE", "STAGE_ID", "CATEGORY_ID", "ORIGIN_CATEGORY_ID", "DATE_MODIFY",
-            "CONTACT_ID", "SOURCE_ID",
-            TERM_FIELD, PHONE_REGION_FIELD, BOOKING_METHOD_FIELD,
-        ],
+        "filter[CATEGORY_ID][]": [CAT_SITE] + list(APPOINTMENT_CATEGORIES),
+        "select[]": ["ID", "TITLE", "STAGE_ID", "CATEGORY_ID", "DATE_MODIFY", "CONTACT_ID", "SOURCE_ID"],
         "start": 0
     }
 
     deals = []
     while True:
-        data = b24_get(WEBHOOK_URL, "crm.deal.list", params)
+        data = b24_get(webhook_url, "crm.deal.list", params)
         batch = data.get("result", [])
         if not batch:
             break
@@ -322,9 +168,11 @@ def fetch_all_deals_site(WEBHOOK_URL: str, manager_id: int, TERM_FIELD: str, PHO
         if data.get("next") is None:
             break
         params["start"] = data["next"]
+
     return deals
 
-def fetch_stagehistory(WEBHOOK_URL: str, deal_id: int, limit: int = 2000):
+
+def fetch_stagehistory(webhook_url: str, deal_id: int, limit: int = 2000):
     params = {
         "entityTypeId": 2,
         "filter[OWNER_ID]": deal_id,
@@ -335,7 +183,7 @@ def fetch_stagehistory(WEBHOOK_URL: str, deal_id: int, limit: int = 2000):
 
     rows = []
     while True:
-        data = b24_get(WEBHOOK_URL, "crm.stagehistory.list", params)
+        data = b24_get(webhook_url, "crm.stagehistory.list", params)
         items = (data.get("result") or {}).get("items", [])
         if isinstance(items, list):
             rows.extend(items)
@@ -350,6 +198,10 @@ def fetch_stagehistory(WEBHOOK_URL: str, deal_id: int, limit: int = 2000):
 
     return rows
 
+
+# =========================
+# Contacts phone (batch)
+# =========================
 def normalize_phone(phones):
     if not phones:
         return ""
@@ -363,7 +215,8 @@ def normalize_phone(phones):
                     return v
     return ""
 
-def fetch_contacts_phones(WEBHOOK_URL: str, contact_ids: list[int]) -> dict[int, str]:
+
+def fetch_contacts_phones(webhook_url: str, contact_ids: list[int]) -> dict[int, str]:
     contact_ids = [int(x) for x in contact_ids if x]
     contact_ids = sorted(set(contact_ids))
     if not contact_ids:
@@ -379,7 +232,7 @@ def fetch_contacts_phones(WEBHOOK_URL: str, contact_ids: list[int]) -> dict[int,
             "start": 0
         }
         while True:
-            data = b24_get(WEBHOOK_URL, "crm.contact.list", params)
+            data = b24_get(webhook_url, "crm.contact.list", params)
             res = data.get("result", [])
             for c in res:
                 cid = int(c.get("ID"))
@@ -387,167 +240,221 @@ def fetch_contacts_phones(WEBHOOK_URL: str, contact_ids: list[int]) -> dict[int,
             if data.get("next") is None:
                 break
             params["start"] = data["next"]
+
     return phones
 
-# -------------------------
-# MAIN BUILD (Site 47)
-# -------------------------
-def build_report_site(
-    WEBHOOK_URL: str,
-    LOCAL_TZ_NAME: str,
-    ZoneInfo,
-    manager_id: int,
-    target_day: date,
-    BASE_INACTIVITY_DAYS: int,
-    TERM_FIELD: str,
-    PHONE_REGION_FIELD: str,
-    BOOKING_METHOD_FIELD: str,
-    PHONE_REGION_ENUM: dict,
-    BOOKING_METHOD_ENUM: dict,
-    term_text_from_raw,                # передай з основного файлу
-    fetch_deal_userfield_enum_map,      # передай з основного файлу
-):
-    all_deals = fetch_all_deals_site(WEBHOOK_URL, manager_id, TERM_FIELD, PHONE_REGION_FIELD, BOOKING_METHOD_FIELD)
-    deals_day = [d for d in all_deals if is_modified_on(d.get("DATE_MODIFY", ""), target_day, LOCAL_TZ_NAME, ZoneInfo)]
+
+# =========================
+# Stage-history analysis (same principles)
+# =========================
+def last_stage_key_before_day(history_rows, target_day: date, local_tz_name: str):
+    last_dt = None
+    last_key = None
+    for row in history_rows:
+        dt = parse_dt(row.get("CREATED_TIME"))
+        if not dt:
+            continue
+        d = to_local_date(dt, local_tz_name)
+        if d is None or d >= target_day:
+            continue
+        if last_dt is None or dt > last_dt:
+            last_dt = dt
+            last_key = (int(row.get("CATEGORY_ID", -1)), row.get("STAGE_ID", ""))
+    return last_dt, last_key
+
+
+def has_real_stage_change_on_day(history_rows, target_day: date, local_tz_name: str) -> bool:
+    _, prev_key = last_stage_key_before_day(history_rows, target_day, local_tz_name)
+
+    if prev_key is None:
+        for row in history_rows:
+            dt = parse_dt(row.get("CREATED_TIME"))
+            if not dt:
+                continue
+            if to_local_date(dt, local_tz_name) == target_day:
+                return True
+        return False
+
+    for row in history_rows:
+        dt = parse_dt(row.get("CREATED_TIME"))
+        if not dt:
+            continue
+        if to_local_date(dt, local_tz_name) != target_day:
+            continue
+        key = (int(row.get("CATEGORY_ID", -1)), row.get("STAGE_ID", ""))
+        if key != prev_key:
+            return True
+
+    return False
+
+
+def last_stage_change_before_day(history_rows, target_day: date, local_tz_name: str):
+    last_dt = None
+    for row in history_rows:
+        dt = parse_dt(row.get("CREATED_TIME"))
+        if not dt:
+            continue
+        d = to_local_date(dt, local_tz_name)
+        if d is None:
+            continue
+        if d < target_day:
+            if last_dt is None or dt > last_dt:
+                last_dt = dt
+    return last_dt
+
+
+def max_levels_before_and_on_day(history_rows, target_day: date, local_tz_name: str):
+    max_before = 0
+    max_today = 0
+    had_today = False
+
+    for row in history_rows:
+        dt = parse_dt(row.get("CREATED_TIME"))
+        if not dt:
+            continue
+
+        cat = int(row.get("CATEGORY_ID", -1))
+        stg = row.get("STAGE_ID", "")
+        lvl = level_from_stage(cat, stg)
+        if lvl <= 0:
+            continue
+
+        d = to_local_date(dt, local_tz_name)
+        if d is None:
+            continue
+
+        if d < target_day:
+            max_before = max(max_before, lvl)
+        elif d == target_day:
+            had_today = True
+            max_today = max(max_today, lvl)
+
+    return had_today, max_before, max_today
+
+
+def levels_gained_on_day(history_rows, target_day: date, local_tz_name: str):
+    had_today, max_before, max_today = max_levels_before_and_on_day(history_rows, target_day, local_tz_name)
+
+    if not had_today:
+        return set(), "Не було змін статусів у цей день", max_before, max_today
+    if max_today <= max_before:
+        return set(), "Статус не піднявся вище (повторна робота)", max_before, max_today
+
+    return set(range(max_before + 1, max_today + 1)), "OK", max_before, max_today
+
+
+def levels_for_base_report(history_rows, target_day: date, local_tz_name: str):
+    cutoff = target_day - timedelta(days=BASE_INACTIVITY_DAYS)
+
+    last_before = last_stage_change_before_day(history_rows, target_day, local_tz_name)
+    if not last_before:
+        return set(), "База: немає історії до цього дня", None, 0
+
+    last_before_date = to_local_date(last_before, local_tz_name)
+    if last_before_date is None or last_before_date > cutoff:
+        return set(), "База: не було паузи > 30 днів", last_before_date, 0
+
+    had_today, _, max_today = max_levels_before_and_on_day(history_rows, target_day, local_tz_name)
+    if not had_today or max_today <= 0:
+        return set(), "База: у цей день не було статусного руху", last_before_date, max_today
+
+    return set(range(1, max_today + 1)), "BASE_OK", last_before_date, max_today
+
+
+# =========================
+# Build SITE report
+# =========================
+def build_report_site(webhook_url: str, local_tz_name: str, manager_id: int, target_day: date):
+    all_deals = fetch_all_deals(webhook_url, manager_id)
+    deals_day = [d for d in all_deals if is_modified_on(d.get("DATE_MODIFY", ""), target_day, local_tz_name)]
 
     contact_ids = []
     for d in deals_day:
         cid = d.get("CONTACT_ID")
         if cid:
             contact_ids.append(int(cid))
-    phones_map = fetch_contacts_phones(WEBHOOK_URL, contact_ids)
-
-    term_enum_map = fetch_deal_userfield_enum_map(TERM_FIELD)
+    phones_map = fetch_contacts_phones(webhook_url, contact_ids)
 
     total_day = empty_counts()
     total_base = empty_counts()
 
-    # region -> category_label -> source_name -> counts
-    day_region_category_source = defaultdict(lambda: defaultdict(lambda: defaultdict(empty_counts)))
+    day_by_bucket = defaultdict(empty_counts)
+    base_by_bucket = defaultdict(empty_counts)
 
-    ignored_no_real_stage_change = 0
+    day_by_bucket_source = defaultdict(lambda: defaultdict(empty_counts))
+    base_by_bucket_source = defaultdict(lambda: defaultdict(empty_counts))
+
     skipped = Counter()
+    ignored_no_real_stage_change = 0
+
     rows = []
 
     for d in deals_day:
         deal_id = int(d.get("ID"))
         title = d.get("TITLE", "—")
         cat_now = int(d.get("CATEGORY_ID", -1))
-
-        origin_cat = int(d.get("ORIGIN_CATEGORY_ID") or 0)
-
-        # беремо ТІЛЬКИ угоди, що стартували з сайту
-        if origin_cat != CAT_SITE:
-            continue
-
         stage_now = d.get("STAGE_ID", "")
+        source_id = str(d.get("SOURCE_ID") or "").strip()
+
         contact_id = int(d.get("CONTACT_ID") or 0)
         phone = phones_map.get(contact_id, "")
 
-        source_id = str(d.get("SOURCE_ID") or "").strip()
-        source_name = source_name_from_id_site(source_id)
+        bucket = site_bucket_from_source(source_id)
+        source_label = source_id or "(порожньо)"
 
-        term_raw = d.get(TERM_FIELD, "")
-        term_text = term_text_from_raw(term_raw, term_enum_map)
+        history = fetch_stagehistory(webhook_url, deal_id)
 
-        region_raw = d.get(PHONE_REGION_FIELD)
-        region_group = phone_region_group_from_raw(region_raw)
-        region_label = phone_region_label_from_raw(region_raw, PHONE_REGION_ENUM)
-
-        booking_raw = d.get(BOOKING_METHOD_FIELD)
-        booking_method = booking_method_from_raw(booking_raw, BOOKING_METHOD_ENUM)  # "Дзвінок"/"Повідомлення"/""
-
-        history = fetch_stagehistory(WEBHOOK_URL, deal_id)
-
-        # =====================================
-        # FINAL FUNNEL TRANSFERS (by CATEGORY)
-        # =====================================
-
-        # Appointment funnels = Запис
-        if cat_now in APPOINTMENT_CATEGORIES and is_modified_on(d.get("DATE_MODIFY",""), target_day, LOCAL_TZ_NAME, ZoneInfo):
-
-            total_day["Взято"] += 1
-            total_day["Дозвон"] += 1
-            total_day["Запис"] += 1
-
-            continue
-
-        # Redirect funnel = Взято + Дозвон
-        if cat_now == CAT_REDIRECT and is_modified_on(d.get("DATE_MODIFY",""), target_day, LOCAL_TZ_NAME, ZoneInfo):
-
-            total_day["Взято"] += 1
-            total_day["Дозвон"] += 1
-
-            continue
-
-        if not has_real_stage_change_on_day(history, target_day, LOCAL_TZ_NAME, ZoneInfo):
+        if not has_real_stage_change_on_day(history, target_day, local_tz_name):
             ignored_no_real_stage_change += 1
             continue
 
-        base_levels, base_reason, last_before_date, _ = levels_for_base_report(
-            history, target_day, BASE_INACTIVITY_DAYS, LOCAL_TZ_NAME, ZoneInfo
-        )
+        # BASE first: if BASE_OK -> only in base
+        base_levels, base_reason, last_before_date, _ = levels_for_base_report(history, target_day, local_tz_name)
         is_base = (base_reason == "BASE_OK" and bool(base_levels))
 
-        bucket = bucket_from_source_site(source_id)
-        category_label = bucket
-
-        # ---------- BASE ----------
         if is_base:
             add_levels(total_base, base_levels)
-            if 5 in base_levels:
-                add_booking(total_base, booking_method)
+            add_levels(base_by_bucket[bucket], base_levels)
+            add_levels(base_by_bucket_source[bucket][source_label], base_levels)
 
-            base_counted_to = "БАЗА: " + ", ".join(LEVEL_NAMES[l] for l in sorted(base_levels))
-            base_reason_text = f"Оживлення після паузи > {BASE_INACTIVITY_DAYS} днів (останній рух: {last_before_date})"
+            counted_to = "БАЗА: " + ", ".join(LEVEL_NAMES[l] for l in sorted(base_levels))
+            reason_text = f"Оживлення після паузи > {BASE_INACTIVITY_DAYS} днів (останній рух: {last_before_date})"
 
             rows.append({
                 "Угода №": deal_id,
                 "Номер телефона": phone,
                 "Назва картки": title,
+                "Категорія": "Сайт (47)",
+                "Джерело": source_label,
+                "Bucket": bucket,
                 "Поточний статус": f"{cat_now}:{stage_now}",
-                "Джерело (ID)": source_id,
-                "Джерело": source_name,
-                "Термін": term_text,
-                "Країна номера": region_label,
-                "Категорія": category_label,
-                "Спосіб запису": booking_method,
-                "Результат": base_counted_to,
-                "Причина / коментар": base_reason_text,
+                "Результат": counted_to,
+                "Причина / коментар": reason_text,
             })
             continue
 
-        # ---------- DAY ----------
-        day_levels, day_reason, _, _ = levels_gained_on_day(history, target_day, LOCAL_TZ_NAME, ZoneInfo)
-
-        counted_to = ""
-        reason_text = ""
+        # Day report
+        day_levels, day_reason, _, _ = levels_gained_on_day(history, target_day, local_tz_name)
 
         if day_levels:
             add_levels(total_day, day_levels)
-            if 5 in day_levels:
-                add_booking(total_day, booking_method)
-
-            add_levels(day_region_category_source[region_group][category_label][source_name], day_levels)
-            if 5 in day_levels:
-                add_booking(day_region_category_source[region_group][category_label][source_name], booking_method)
-
+            add_levels(day_by_bucket[bucket], day_levels)
+            add_levels(day_by_bucket_source[bucket][source_label], day_levels)
             counted_to = "ДЕНЬ: " + ", ".join(LEVEL_NAMES[l] for l in sorted(day_levels))
+            reason_text = ""
         else:
             skipped[day_reason] += 1
+            counted_to = ""
             reason_text = day_reason
 
         rows.append({
             "Угода №": deal_id,
             "Номер телефона": phone,
             "Назва картки": title,
+            "Категорія": "Сайт (47)",
+            "Джерело": source_label,
+            "Bucket": bucket,
             "Поточний статус": f"{cat_now}:{stage_now}",
-            "Джерело (ID)": source_id,
-            "Джерело": source_name,
-            "Термін": term_text,
-            "Країна номера": region_label,
-            "Категорія": category_label,
-            "Спосіб запису": booking_method,
             "Результат": counted_to,
             "Причина / коментар": reason_text,
         })
@@ -559,4 +466,13 @@ def build_report_site(
         "skipped_reasons": dict(skipped),
     }
 
-    return (total_day, total_base, day_region_category_source, rows, meta)
+    return (
+        total_day,
+        total_base,
+        dict(day_by_bucket),
+        dict(base_by_bucket),
+        {b: dict(s) for b, s in day_by_bucket_source.items()},
+        {b: dict(s) for b, s in base_by_bucket_source.items()},
+        rows,
+        meta,
+    )
