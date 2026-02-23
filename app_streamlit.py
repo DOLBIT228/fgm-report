@@ -44,7 +44,6 @@ CAT_OFFLINE = 63
 CAT_CHAT_SALES = 57
 CAT_VG = 41
 CAT_SITE = 47  # ✅ Сайт (окрема воронка)
-CAT_REDIRECT = 65
 
 CATEGORIES_INSTAGRAM = [CAT_CRM_FGM, CAT_ONLINE, CAT_OFFLINE, CAT_CHAT_SALES, CAT_VG]
 CATEGORIES_SITE = [CAT_SITE]
@@ -231,15 +230,7 @@ SITE_AS_CALL = {              # Не ЦА/Придбали/Не в пошука�
 }
 
 def level_from_stage(direction_key: str, category_id: int, stage_id: str) -> int:
-
-    # --------------------------------------------------
-    # ✅ REDIRECT FUNNEL 65
-    # бізнес-логіка: взяли + додзвонили і передали
-    # --------------------------------------------------
-    if category_id == CAT_REDIRECT:
-        return 2   # означає максимум "Дозвон"
-
-    # ---------------- SITE ----------------
+    # direction_key: "instagram" або "site"
     if direction_key == "site":
         if stage_id in SITE_IGNORE:
             return 0
@@ -249,7 +240,7 @@ def level_from_stage(direction_key: str, category_id: int, stage_id: str) -> int
             return 2
         return SITE_STAGE_TO_LEVEL.get(stage_id, 0)
 
-    # ---------------- INSTAGRAM ----------------
+    # instagram/default
     if category_id == CAT_CRM_FGM:
         if stage_id in UNSUCCESSFUL_IGNORE_59:
             return 0
