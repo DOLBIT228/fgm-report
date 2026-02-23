@@ -261,7 +261,6 @@ def max_levels_before_and_on_day(history_rows, target_day: date, LOCAL_TZ_NAME: 
         # якщо цього дня угода попала в appointment funnel — це автоматично "Запис"
         if d == target_day and cat in APPOINTMENT_CATEGORIES:
             had_today = True
-            had_appointment_today = True
             max_today = max(max_today, 5)
             continue
 
@@ -462,7 +461,7 @@ def build_report_site(
         # -------------------------------------------------
         # REDIRECT TO 65 = Взято + Дозвон (без іншої логіки)
         # -------------------------------------------------
-        if cat_now == CAT_REDIRECT and has_real_stage_change_on_day(history, target_day, LOCAL_TZ_NAME, ZoneInfo):
+        if cat_now == CAT_REDIRECT:
 
             total_day["Взято"] += 1
             total_day["Дозвон"] += 1
@@ -485,10 +484,6 @@ def build_report_site(
                 "Причина / коментар": "Передано у воронку 65",
             })
         
-            continue
-
-        if not has_real_stage_change_on_day(history, target_day, LOCAL_TZ_NAME, ZoneInfo):
-            ignored_no_real_stage_change += 1
             continue
 
         base_levels, base_reason, last_before_date, _ = levels_for_base_report(
