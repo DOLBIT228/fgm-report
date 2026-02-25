@@ -651,34 +651,33 @@ def levels_for_base_report(direction_key: str, history_rows, target_day: date):
 
     return set(range(1, max_today + 1)), "BASE_OK", last_before_date, max_today
 
-history = fetch_stagehistory(deal_id)
-
-# ⛔️ Site: Подвійні — пропускаємо повністю
-if direction_key == "site" and stage_now == "C47:UC_DBKQMB":
-    continue
-
-# ✅ Каблучки ЦА Ближчим часом (65) — рахуємо як Взято навіть без stagehistory
-# ✅ Каблучки ЦА Ближчим часом (65) — завжди Взято + Дозвон
-if cat_now == CAT_RINGS_TO_OTHER:
-    add_levels(total_day, {1, 2})
-
-    rows.append({
-        "Угода №": deal_id,
-        "Номер телефона": phone,
-        "Назва картки": title,
-        "Поточний статус": f"{cat_now}:{stage_now}",
-        "Джерело (ID)": source_id,
-        "Джерело": source_name,
-        "Термін": term_text,
-        "Країна номера": region_label,
-        "Категорія": "Передано в каблучки",
-        "Інстаграм сегмент": "",
-        "Спосіб запису": "",
-        "Результат": "ДЕНЬ: Взято, Дозвон",
-        "Причина / коментар": "Передано у воронку Каблучки",
-    })
-
-    continue
+    history = fetch_stagehistory(deal_id)
+    
+    # ⛔️ Site: Подвійні — пропускаємо повністю
+    if direction_key == "site" and stage_now == "C47:UC_DBKQMB":
+        continue
+    
+    # ✅ Каблучки ЦА Ближчим часом (65) — завжди Взято + Дозвон
+    if cat_now == CAT_RINGS_TO_OTHER:
+        add_levels(total_day, {1, 2})
+    
+        rows.append({
+            "Угода №": deal_id,
+            "Номер телефона": phone,
+            "Назва картки": title,
+            "Поточний статус": f"{cat_now}:{stage_now}",
+            "Джерело (ID)": source_id,
+            "Джерело": source_name,
+            "Термін": term_text,
+            "Країна номера": region_label,
+            "Категорія": "Передано в каблучки",
+            "Інстаграм сегмент": "",
+            "Спосіб запису": "",
+            "Результат": "ДЕНЬ: Взято, Дозвон",
+            "Причина / коментар": "Передано у воронку Каблучки",
+        })
+    
+        continue
 
 if not has_real_stage_change_on_day(history, target_day):
     ignored_no_real_stage_change += 1
