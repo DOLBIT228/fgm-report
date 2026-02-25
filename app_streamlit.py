@@ -667,6 +667,107 @@ def levels_for_base_report(direction_key: str, history_rows, target_day: date):
     return set(range(1, max_today + 1)), "BASE_OK", last_before_date, max_today
 
 # ======================================================
+# REPORT
+# ======================================================
+def build_report(manager_id: int, target_day: date, direction_key: str):
+    categories = ALL_CATEGORIES
+
+    all_deals = fetch_all_deals(manager_id, categories)
+    deals_day = [d for d in all_deals if is_modified_on(d.get("DATE_MODIFY", ""), target_day)]
+
+    contact_ids = []
+    for d in deals_day:
+        cid = d.get("CONTACT_ID")
+        if cid:
+            contact_ids.append(int(cid))
+    phones_map = fetch_contacts_phones(contact_ids)
+
+    term_enum_map = fetch_deal_userfield_enum_map(TERM_FIELD)
+
+    total_day = empty_counts()
+    total_base = empty_counts()
+
+    day_region_category_source = defaultdict(lambda: defaultdict(lambda: defaultdict(empty_counts)))
+
+    ignored_no_real_stage_change = 0
+    skipped = Counter()
+    rows = []
+
+    for d in deals_day:
+        deal_id = int(d.get("ID"))
+        title = d.get("TITLE", "—")
+        cat_now = int(d.get("CATEGORY_ID", -1))
+        stage_now = d.get("STAGE_ID", "")
+        contact_id = int(d.get("CONTACT_ID") or 0)
+        phone = phones_map.get(contact_id, "")
+
+        source_id = str(d.get("SOURCE_ID") or "").strip()
+        source_name = source_name_from_id(source_id) or source_id or "Без джерела"
+        deal_direction = "instagram" if source_name in INSTAGRAM_SOURCE_NAMES else "site"
+
+        if deal_direction != direction_key:
+            continue
+
+        term_text = term_text_from_raw(d.get(TERM_FIELD, ""), term_enum_map)
+
+        region_raw = d.get(PHONE_REGION_FIELD)
+        region_group = phone_region_group_from_raw(region_raw)
+        region_label = phone_region_label_from_raw(region_raw)
+
+        booking_method = booking_method_from_raw(d.get(BOOKING_METHOD_FIELD))
+
+        history = fetch_stagehistory(deal_id)
+
+        # ⛔️ Подвійні (site) — повністю ігноруємо
+        if direction_key == "site" and stage_now == "C47:UC_DBKQMB":
+            continue
+
+        # ✅ Каблучки ЦА Ближчим часом (65) — Взято + Дозвон
+        if cat_now == CAT_RINGS_TO_OTHER:
+            add_levels(total_day, {1, 2})
+
+            rows.append({
+                "Угода №": deal_id,
+                "Номер телефона": phone,
+                "Назва картки": title,
+                "Поточний статус": f"{cat_now}:{stage_now}",
+                "Джерело": source_name,
+                "Категорія": "Передано в каблучки",
+                "Результат": "ДЕНЬ: Взято, Дозвон",
+                "Причина / коментар": "Передано у воронку Каблучки",
+            })
+            continue
+
+        if not has_real_stage_change_on_day(history, target_day):
+            ignored_no_real_stage_change += 1
+            continue
+
+        day_levels, _, _, _ = levels_gained_on_day(direction_key, history, target_day)
+
+        if day_levels:
+            add_levels(total_day, day_levels)
+
+        rows.append({
+            "Угода №": deal_id,
+            "Номер телефона": phone,
+            "Назва картки": title,
+            "Поточний статус": f"{cat_now}:{stage_now}",
+            "Джерело": source_name,
+            "Категорія": "",
+            "Результат": ", ".join(LEVEL_NAMES[l] for l in sorted(day_levels)),
+            "Причина / коментар": "",
+        })
+
+    meta = {
+        "deals_modified": len(deals_day),
+        "ignored_no_real_stage_change": ignored_no_real_stage_change,
+        "skipped_total": int(sum(skipped.values())),
+        "skipped_reasons": dict(skipped),
+    }
+
+    return total_day, total_base, day_region_category_source, rows, meta
+
+# ======================================================
 # AUTH
 # ======================================================
 def auth_block():
