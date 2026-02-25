@@ -47,14 +47,21 @@ CAT_SITE = 47  # ✅ Сайт (окрема воронка)
 CAT_RINGS_TO_OTHER = 65  # Каблучки ЦА Ближчим часом
 
 ALL_CATEGORIES = [
-    CAT_CRM_FGM,      # 59 — Instagram
-    CAT_SITE,         # 47 — Site
-    CAT_ONLINE,       # 61 — Онлайн консультації
-    CAT_OFFLINE,      # 63 — Офлайн консультації
-    CAT_CHAT_SALES,   # 57 — Переписка
-    CAT_VG,           # 41 — Вікторія Гарденс
-    CAT_RINGS_TO_OTHER, # 65 Каблучки ЦА Ближчим часом
+    CAT_CRM_FGM,
+    CAT_SITE,
+    CAT_ONLINE,
+    CAT_OFFLINE,
+    CAT_CHAT_SALES,
+    CAT_VG,
+    CAT_RINGS_TO_OTHER,   # ← додали
 ]
+
+APPOINTMENT_CATEGORIES = {
+    CAT_ONLINE,   # 61
+    CAT_OFFLINE,  # 63
+    CAT_CHAT_SALES, # 57
+    CAT_VG,       # 41
+}
 
 BASE_INACTIVITY_DAYS = 30
 
@@ -236,10 +243,6 @@ SITE_AS_CALL = {              # Не ЦА/Придбали/Не в пошука�
 }
 
 def level_from_stage(direction_key: str, category_id: int, stage_id: str) -> int:
-
-    # ✅ Каблучки ЦА Ближчим часом → завжди тільки Взято + Дозвон
-    if category_id == CAT_RINGS_TO_OTHER:
-        return 2
 
     # ---------- SITE ----------
     if direction_key == "site":
