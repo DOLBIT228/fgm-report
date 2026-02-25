@@ -680,19 +680,18 @@ def build_report(manager_id: int, target_day: date, direction_key: str):
         booking_raw = d.get(BOOKING_METHOD_FIELD)
         booking_method = booking_method_from_raw(booking_raw)
 
+        if direction_key == "site" and stage_now == "C47:UC_DBKQMB":
+            continue
+
         if direction_key == "instagram":
             preview_bucket = bucket_from_source_instagram(source_id, term_text, is_base=False)
         else:
             preview_bucket = bucket_from_source_site(source_id, is_base=False)
-        if preview_bucket is None:
-            continue
-
-        if direction_key == "site" and stage_now == "C47:UC_DBKQMB":
-            continue
 
         if cat_now == CAT_RINGS_TO_OTHER:
+            category_label = preview_bucket or "Інше"
             add_levels(total_day, {1, 2})
-            add_levels(day_region_category_source[region_group][preview_bucket][source_name], {1, 2})
+            add_levels(day_region_category_source[region_group][category_label][source_name], {1, 2})
 
             rows.append({
                 "Угода №": deal_id,
@@ -703,12 +702,15 @@ def build_report(manager_id: int, target_day: date, direction_key: str):
                 "Джерело": source_name,
                 "Термін": term_text,
                 "Країна номера": region_label,
-                "Категорія": preview_bucket,
+                "Категорія": category_label,
                 "Інстаграм сегмент": "",
                 "Спосіб запису": booking_method,
                 "Результат": "ДЕНЬ: Взято, Дозвон",
                 "Причина / коментар": "CATEGORY 65: Каблучки ЦА Ближчим часом",
             })
+            continue
+
+        if preview_bucket is None:
             continue
 
         history = fetch_stagehistory(deal_id)
