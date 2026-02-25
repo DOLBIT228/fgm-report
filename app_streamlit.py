@@ -44,6 +44,7 @@ CAT_OFFLINE = 63
 CAT_CHAT_SALES = 57
 CAT_VG = 41
 CAT_SITE = 47  # ✅ Сайт (окрема воронка)
+CAT_RINGS_TO_OTHER = 65  # Каблучки ЦА Ближчим часом
 
 ALL_CATEGORIES = [
     CAT_CRM_FGM,      # 59 — Instagram
@@ -52,6 +53,7 @@ ALL_CATEGORIES = [
     CAT_OFFLINE,      # 63 — Офлайн консультації
     CAT_CHAT_SALES,   # 57 — Переписка
     CAT_VG,           # 41 — Вікторія Гарденс
+    CAT_RINGS_TO_OTHER, # 65 Каблучки ЦА Ближчим часом
 ]
 
 BASE_INACTIVITY_DAYS = 30
@@ -234,7 +236,12 @@ SITE_AS_CALL = {              # Не ЦА/Придбали/Не в пошука�
 }
 
 def level_from_stage(direction_key: str, category_id: int, stage_id: str) -> int:
-    # direction_key: "instagram" або "site"
+
+    # ✅ Каблучки ЦА Ближчим часом → завжди тільки Взято + Дозвон
+    if category_id == CAT_RINGS_TO_OTHER:
+        return 2
+
+    # ---------- SITE ----------
     if direction_key == "site":
         if stage_id in SITE_IGNORE:
             return 0
@@ -244,7 +251,7 @@ def level_from_stage(direction_key: str, category_id: int, stage_id: str) -> int
             return 2
         return SITE_STAGE_TO_LEVEL.get(stage_id, 0)
 
-    # instagram/default
+    # ---------- INSTAGRAM ----------
     if category_id == CAT_CRM_FGM:
         if stage_id in UNSUCCESSFUL_IGNORE_59:
             return 0
@@ -254,6 +261,7 @@ def level_from_stage(direction_key: str, category_id: int, stage_id: str) -> int
             return 2
         return CRM_STAGE_TO_LEVEL.get(stage_id, 0)
 
+    # консультаційні воронки = Запис
     if category_id in APPOINTMENT_CATEGORIES:
         return 5
 
@@ -697,6 +705,10 @@ def build_report(manager_id: int, target_day: date, direction_key: str):
         booking_method = booking_method_from_raw(booking_raw)
 
         history = fetch_stagehistory(deal_id)
+
+        # ⛔️ Site: Подвійні — пропускаємо повністю
+        if direction_key == "site" and stage_now == "C47:UC_DBKQMB":
+            continue
 
         if not has_real_stage_change_on_day(history, target_day):
             ignored_no_real_stage_change += 1
