@@ -48,7 +48,7 @@ CAT_RINGS_TO_OTHER = 65  # Каблучки ЦА Ближчим часом
 
 ALL_CATEGORIES = [CAT_CRM_FGM, CAT_SITE, CAT_ONLINE, CAT_OFFLINE, CAT_CHAT_SALES, CAT_VG, CAT_RINGS_TO_OTHER]
 
-APPOINTMENT_CATEGORIES = {CAT_ONLINE, CAT_OFFLINE, CAT_CHAT_SALES, CAT_VG}
+APPOINTMENT_CATEGORIES = {CAT_ONLINE, CAT_OFFLINE, CAT_CHAT_SALES, CAT_VG, CAT_RINGS_TO_OTHER}
 
 BASE_INACTIVITY_DAYS = 30
 
@@ -707,12 +707,10 @@ def build_report(manager_id: int, target_day: date, direction_key: str):
         else:
             preview_bucket = bucket_from_source_site(source_id, is_base=False)
 
-        if cat_now == CAT_RINGS_TO_OTHER:
-            history = fetch_stagehistory(deal_id)
-            if not moved_to_category_on_day(history, target_day, CAT_RINGS_TO_OTHER):
-                skipped["CATEGORY 65: не було переходу в цю воронку у цей день"] += 1
-                continue
+        history = fetch_stagehistory(deal_id)
+        moved_to_rings_today = moved_to_category_on_day(history, target_day, CAT_RINGS_TO_OTHER)
 
+        if moved_to_rings_today:
             category_label = preview_bucket or "Інше"
             add_levels(total_day, {1, 2})
             add_levels(day_region_category_source[region_group][category_label][source_name], {1, 2})
@@ -734,10 +732,12 @@ def build_report(manager_id: int, target_day: date, direction_key: str):
             })
             continue
 
-        if preview_bucket is None:
+        if cat_now == CAT_RINGS_TO_OTHER:
+            skipped["CATEGORY 65: не було переходу в цю воронку у цей день"] += 1
             continue
 
-        history = fetch_stagehistory(deal_id)
+        if preview_bucket is None:
+            continue
 
         if not has_real_stage_change_on_day(history, target_day):
             ignored_no_real_stage_change += 1
