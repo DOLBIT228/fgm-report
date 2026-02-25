@@ -614,6 +614,25 @@ def levels_gained_on_day(direction_key: str, history_rows, target_day: date):
 
     return set(range(max_before + 1, max_today + 1)), "OK", max_before, max_today
 
+def moved_to_category_on_day(history_rows, target_day: date, category_id: int) -> bool:
+    _, prev_key = last_stage_key_before_day(history_rows, target_day)
+    prev_cat = prev_key[0] if prev_key else None
+
+    day_rows = []
+    for row in history_rows:
+        dt = parse_dt(row.get("CREATED_TIME"))
+        if not dt:
+            continue
+        if to_local_date(dt) == target_day:
+            day_rows.append((dt, int(row.get("CATEGORY_ID", -1))))
+
+    for _, cat in sorted(day_rows, key=lambda x: x[0]):
+        if cat == category_id and prev_cat != category_id:
+            return True
+        prev_cat = cat
+
+    return False
+
 def levels_for_base_report(direction_key: str, history_rows, target_day: date):
     cutoff = target_day - timedelta(days=BASE_INACTIVITY_DAYS)
 
@@ -689,6 +708,11 @@ def build_report(manager_id: int, target_day: date, direction_key: str):
             preview_bucket = bucket_from_source_site(source_id, is_base=False)
 
         if cat_now == CAT_RINGS_TO_OTHER:
+            history = fetch_stagehistory(deal_id)
+            if not moved_to_category_on_day(history, target_day, CAT_RINGS_TO_OTHER):
+                skipped["CATEGORY 65: не було переходу в цю воронку у цей день"] += 1
+                continue
+
             category_label = preview_bucket or "Інше"
             add_levels(total_day, {1, 2})
             add_levels(day_region_category_source[region_group][category_label][source_name], {1, 2})
@@ -706,7 +730,7 @@ def build_report(manager_id: int, target_day: date, direction_key: str):
                 "Інстаграм сегмент": "",
                 "Спосіб запису": booking_method,
                 "Результат": "ДЕНЬ: Взято, Дозвон",
-                "Причина / коментар": "CATEGORY 65: Каблучки ЦА Ближчим часом",
+                "Причина / коментар": "CATEGORY 65: перехід у воронку Каблучки ЦА Ближчим часом",
             })
             continue
 
@@ -778,7 +802,7 @@ def build_report(manager_id: int, target_day: date, direction_key: str):
             counted_to = "ДЕНЬ: " + ", ".join(LEVEL_NAMES[l] for l in sorted(day_levels))
         else:
             skipped[day_reason] += 1
-            reason_text = day_reason
+            continue
 
         rows.append({
             "Угода №": deal_id,
