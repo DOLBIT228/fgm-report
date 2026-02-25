@@ -45,10 +45,14 @@ CAT_CHAT_SALES = 57
 CAT_VG = 41
 CAT_SITE = 47  # ✅ Сайт (окрема воронка)
 
-CATEGORIES_INSTAGRAM = [CAT_CRM_FGM, CAT_ONLINE, CAT_OFFLINE, CAT_CHAT_SALES, CAT_VG]
-CATEGORIES_SITE = [CAT_SITE]
-
-APPOINTMENT_CATEGORIES = {CAT_ONLINE, CAT_OFFLINE, CAT_CHAT_SALES, CAT_VG}
+ALL_CATEGORIES = [
+    CAT_CRM_FGM,      # 59 — Instagram
+    CAT_SITE,         # 47 — Site
+    CAT_ONLINE,       # 61 — Онлайн консультації
+    CAT_OFFLINE,      # 63 — Офлайн консультації
+    CAT_CHAT_SALES,   # 57 — Переписка
+    CAT_VG,           # 41 — Вікторія Гарденс
+]
 
 BASE_INACTIVITY_DAYS = 30
 
@@ -643,7 +647,7 @@ def levels_for_base_report(direction_key: str, history_rows, target_day: date):
 # REPORT
 # ======================================================
 def build_report(manager_id: int, target_day: date, direction_key: str):
-    categories = CATEGORIES_INSTAGRAM if direction_key == "instagram" else CATEGORIES_SITE
+    categories = ALL_CATEGORIES
 
     all_deals = fetch_all_deals(manager_id, categories)
     deals_day = [d for d in all_deals if is_modified_on(d.get("DATE_MODIFY", ""), target_day)]
@@ -677,6 +681,10 @@ def build_report(manager_id: int, target_day: date, direction_key: str):
 
         source_id = str(d.get("SOURCE_ID") or "").strip()
         source_name = source_name_from_id(source_id) or source_id or "Без джерела"
+        deal_direction = "instagram" if source_name in INSTAGRAM_SOURCE_NAMES else "site"
+
+        if deal_direction != direction_key:
+            continue
 
         term_raw = d.get(TERM_FIELD, "")
         term_text = term_text_from_raw(term_raw, term_enum_map)
