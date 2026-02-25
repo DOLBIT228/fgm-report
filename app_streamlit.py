@@ -39,14 +39,14 @@ if not USERS:
 # CONSTANTS
 # ======================================================
 CAT_CRM_FGM = 59
+CAT_SITE = 47  # ✅ Сайт (окрема воронка)
 CAT_ONLINE = 61
 CAT_OFFLINE = 63
 CAT_CHAT_SALES = 57
 CAT_VG = 41
-CAT_SITE = 47  # ✅ Сайт (окрема воронка)
+CAT_RINGS_TO_OTHER = 65  # Каблучки ЦА Ближчим часом
 
-CATEGORIES_INSTAGRAM = [CAT_CRM_FGM, CAT_ONLINE, CAT_OFFLINE, CAT_CHAT_SALES, CAT_VG]
-CATEGORIES_SITE = [CAT_SITE]
+ALL_CATEGORIES = [CAT_CRM_FGM, CAT_SITE, CAT_ONLINE, CAT_OFFLINE, CAT_CHAT_SALES, CAT_VG, CAT_RINGS_TO_OTHER]
 
 APPOINTMENT_CATEGORIES = {CAT_ONLINE, CAT_OFFLINE, CAT_CHAT_SALES, CAT_VG}
 
@@ -369,14 +369,12 @@ def bucket_from_source_instagram(source_id: str, term_text: str, is_base: bool) 
     if is_base:
         return "База"
     sname = source_name_from_id(source_id)
+    if sname == "Лендинг" or sname in LANDING_SOURCE_NAMES:
+        return None
     if sname in INSTAGRAM_SOURCE_NAMES:
         return "Інстаграм"
-    if sname in LANDING_SOURCE_NAMES:
-        return "Лендинг"
     if sname == "Чат-бот":
         return "Чат-бот"
-    if sname == "Лендинг":
-        return "Сайт"
     if sname == "Квіз обручки":
         return "Лідогенерація"
     if sname in TELEGRAM_SOURCE_NAMES:
@@ -393,7 +391,7 @@ def bucket_from_source_site(source_id: str, is_base: bool) -> str:
     # ✅ всі інші "лендинги" -> bucket "Лендинг"
     if sname in LANDING_SOURCE_NAMES:
         return "Лендинг"
-    return "Інше"
+    return None
 
 def instagram_term_segment(term_text: str) -> str:
     return "Ближчий час" if _norm(term_text) == _norm("Ближчим часом") else "Майбутнє"
@@ -637,7 +635,7 @@ def levels_for_base_report(direction_key: str, history_rows, target_day: date):
 # REPORT
 # ======================================================
 def build_report(manager_id: int, target_day: date, direction_key: str):
-    categories = CATEGORIES_INSTAGRAM if direction_key == "instagram" else CATEGORIES_SITE
+    categories = ALL_CATEGORIES
 
     all_deals = fetch_all_deals(manager_id, categories)
     deals_day = [d for d in all_deals if is_modified_on(d.get("DATE_MODIFY", ""), target_day)]
@@ -682,6 +680,37 @@ def build_report(manager_id: int, target_day: date, direction_key: str):
         booking_raw = d.get(BOOKING_METHOD_FIELD)
         booking_method = booking_method_from_raw(booking_raw)
 
+        if direction_key == "instagram":
+            preview_bucket = bucket_from_source_instagram(source_id, term_text, is_base=False)
+        else:
+            preview_bucket = bucket_from_source_site(source_id, is_base=False)
+        if preview_bucket is None:
+            continue
+
+        if direction_key == "site" and stage_now == "C47:UC_DBKQMB":
+            continue
+
+        if cat_now == CAT_RINGS_TO_OTHER:
+            add_levels(total_day, {1, 2})
+            add_levels(day_region_category_source[region_group][preview_bucket][source_name], {1, 2})
+
+            rows.append({
+                "Угода №": deal_id,
+                "Номер телефона": phone,
+                "Назва картки": title,
+                "Поточний статус": f"{cat_now}:{stage_now}",
+                "Джерело (ID)": source_id,
+                "Джерело": source_name,
+                "Термін": term_text,
+                "Країна номера": region_label,
+                "Категорія": preview_bucket,
+                "Інстаграм сегмент": "",
+                "Спосіб запису": booking_method,
+                "Результат": "ДЕНЬ: Взято, Дозвон",
+                "Причина / коментар": "CATEGORY 65: Каблучки ЦА Ближчим часом",
+            })
+            continue
+
         history = fetch_stagehistory(deal_id)
 
         if not has_real_stage_change_on_day(history, target_day):
@@ -699,6 +728,9 @@ def build_report(manager_id: int, target_day: date, direction_key: str):
             bucket = bucket_from_source_site(source_id, is_base)
             insta_term = ""
             category_label = bucket
+
+        if bucket is None:
+            continue
 
         # ---------- BASE ----------
         if is_base:
