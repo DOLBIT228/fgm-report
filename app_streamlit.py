@@ -44,24 +44,11 @@ CAT_OFFLINE = 63
 CAT_CHAT_SALES = 57
 CAT_VG = 41
 CAT_SITE = 47  # ✅ Сайт (окрема воронка)
-CAT_RINGS_TO_OTHER = 65  # Каблучки ЦА Ближчим часом
 
-ALL_CATEGORIES = [
-    CAT_CRM_FGM,
-    CAT_SITE,
-    CAT_ONLINE,
-    CAT_OFFLINE,
-    CAT_CHAT_SALES,
-    CAT_VG,
-    CAT_RINGS_TO_OTHER,   # ← додали
-]
+CATEGORIES_INSTAGRAM = [CAT_CRM_FGM, CAT_ONLINE, CAT_OFFLINE, CAT_CHAT_SALES, CAT_VG]
+CATEGORIES_SITE = [CAT_SITE]
 
-APPOINTMENT_CATEGORIES = {
-    CAT_ONLINE,   # 61
-    CAT_OFFLINE,  # 63
-    CAT_CHAT_SALES, # 57
-    CAT_VG,       # 41
-}
+APPOINTMENT_CATEGORIES = {CAT_ONLINE, CAT_OFFLINE, CAT_CHAT_SALES, CAT_VG}
 
 BASE_INACTIVITY_DAYS = 30
 
@@ -243,8 +230,7 @@ SITE_AS_CALL = {              # Не ЦА/Придбали/Не в пошука�
 }
 
 def level_from_stage(direction_key: str, category_id: int, stage_id: str) -> int:
-
-    # ---------- SITE ----------
+    # direction_key: "instagram" або "site"
     if direction_key == "site":
         if stage_id in SITE_IGNORE:
             return 0
@@ -254,7 +240,7 @@ def level_from_stage(direction_key: str, category_id: int, stage_id: str) -> int
             return 2
         return SITE_STAGE_TO_LEVEL.get(stage_id, 0)
 
-    # ---------- INSTAGRAM ----------
+    # instagram/default
     if category_id == CAT_CRM_FGM:
         if stage_id in UNSUCCESSFUL_IGNORE_59:
             return 0
@@ -264,7 +250,6 @@ def level_from_stage(direction_key: str, category_id: int, stage_id: str) -> int
             return 2
         return CRM_STAGE_TO_LEVEL.get(stage_id, 0)
 
-    # консультаційні воронки = Запис
     if category_id in APPOINTMENT_CATEGORIES:
         return 5
 
@@ -380,28 +365,22 @@ TELEGRAM_SOURCE_NAMES = {
 def source_name_from_id(source_id: str) -> str:
     return SOURCE_ID_TO_NAME.get(str(source_id or "").strip(), "")
 
-def bucket_from_source_instagram(source_id: str, term_text: str, is_base: bool):
+def bucket_from_source_instagram(source_id: str, term_text: str, is_base: bool) -> str:
     if is_base:
         return "База"
-
     sname = source_name_from_id(source_id)
-
-    # ⛔️ САЙТ / ЛЕНДИНГ НЕ МАЮТЬ ПРАВА БУТИ В INSTAGRAM
-    if sname == "Лендинг" or sname in LANDING_SOURCE_NAMES:
-        return None
-
     if sname in INSTAGRAM_SOURCE_NAMES:
         return "Інстаграм"
-
+    if sname in LANDING_SOURCE_NAMES:
+        return "Лендинг"
     if sname == "Чат-бот":
         return "Чат-бот"
-
+    if sname == "Лендинг":
+        return "Сайт"
     if sname == "Квіз обручки":
         return "Лідогенерація"
-
     if sname in TELEGRAM_SOURCE_NAMES:
         return "Телеграм"
-
     return "Інше"
 
 def bucket_from_source_site(source_id: str, is_base: bool) -> str:
@@ -563,10 +542,8 @@ def last_stage_key_before_day(history_rows, target_day: date):
             last_key = (int(row.get("CATEGORY_ID", -1)), row.get("STAGE_ID", ""))
     return last_dt, last_key
 
-
 def has_real_stage_change_on_day(history_rows, target_day: date) -> bool:
     _, prev_key = last_stage_key_before_day(history_rows, target_day)
-
     if prev_key is None:
         for row in history_rows:
             dt = parse_dt(row.get("CREATED_TIME"))
@@ -575,20 +552,16 @@ def has_real_stage_change_on_day(history_rows, target_day: date) -> bool:
             if to_local_date(dt) == target_day:
                 return True
         return False
-
     for row in history_rows:
         dt = parse_dt(row.get("CREATED_TIME"))
         if not dt:
             continue
         if to_local_date(dt) != target_day:
             continue
-
         key = (int(row.get("CATEGORY_ID", -1)), row.get("STAGE_ID", ""))
         if key != prev_key:
             return True
-
     return False
-
 
 def last_stage_change_before_day(history_rows, target_day: date):
     last_dt = None
@@ -603,7 +576,6 @@ def last_stage_change_before_day(history_rows, target_day: date):
             if last_dt is None or dt > last_dt:
                 last_dt = dt
     return last_dt
-
 
 def max_levels_before_and_on_day(direction_key: str, history_rows, target_day: date):
     max_before = 0
@@ -634,20 +606,15 @@ def max_levels_before_and_on_day(direction_key: str, history_rows, target_day: d
 
     return had_today, max_before, max_today
 
-
 def levels_gained_on_day(direction_key: str, history_rows, target_day: date):
-    had_today, max_before, max_today = max_levels_before_and_on_day(
-        direction_key, history_rows, target_day
-    )
+    had_today, max_before, max_today = max_levels_before_and_on_day(direction_key, history_rows, target_day)
 
     if not had_today:
         return set(), "Не було змін статусів у цей день", max_before, max_today
-
     if max_today <= max_before:
         return set(), "Статус не піднявся вище (повторна робота)", max_before, max_today
 
     return set(range(max_before + 1, max_today + 1)), "OK", max_before, max_today
-
 
 def levels_for_base_report(direction_key: str, history_rows, target_day: date):
     cutoff = target_day - timedelta(days=BASE_INACTIVITY_DAYS)
@@ -660,10 +627,7 @@ def levels_for_base_report(direction_key: str, history_rows, target_day: date):
     if last_before_date is None or last_before_date > cutoff:
         return set(), "База: не було паузи > 30 днів", last_before_date, 0
 
-    had_today, _, max_today = max_levels_before_and_on_day(
-        direction_key, history_rows, target_day
-    )
-
+    had_today, _, max_today = max_levels_before_and_on_day(direction_key, history_rows, target_day)
     if not had_today or max_today <= 0:
         return set(), "База: у цей день не було статусного руху", last_before_date, max_today
 
@@ -673,7 +637,7 @@ def levels_for_base_report(direction_key: str, history_rows, target_day: date):
 # REPORT
 # ======================================================
 def build_report(manager_id: int, target_day: date, direction_key: str):
-    categories = ALL_CATEGORIES
+    categories = CATEGORIES_INSTAGRAM if direction_key == "instagram" else CATEGORIES_SITE
 
     all_deals = fetch_all_deals(manager_id, categories)
     deals_day = [d for d in all_deals if is_modified_on(d.get("DATE_MODIFY", ""), target_day)]
@@ -690,6 +654,7 @@ def build_report(manager_id: int, target_day: date, direction_key: str):
     total_day = empty_counts()
     total_base = empty_counts()
 
+    # region -> category_label -> source_name -> counts
     day_region_category_source = defaultdict(lambda: defaultdict(lambda: defaultdict(empty_counts)))
 
     ignored_no_real_stage_change = 0
@@ -706,59 +671,95 @@ def build_report(manager_id: int, target_day: date, direction_key: str):
 
         source_id = str(d.get("SOURCE_ID") or "").strip()
         source_name = source_name_from_id(source_id) or source_id or "Без джерела"
-        deal_direction = "instagram" if source_name in INSTAGRAM_SOURCE_NAMES else "site"
 
-        if deal_direction != direction_key:
-            continue
-
-        term_text = term_text_from_raw(d.get(TERM_FIELD, ""), term_enum_map)
+        term_raw = d.get(TERM_FIELD, "")
+        term_text = term_text_from_raw(term_raw, term_enum_map)
 
         region_raw = d.get(PHONE_REGION_FIELD)
         region_group = phone_region_group_from_raw(region_raw)
         region_label = phone_region_label_from_raw(region_raw)
 
-        booking_method = booking_method_from_raw(d.get(BOOKING_METHOD_FIELD))
+        booking_raw = d.get(BOOKING_METHOD_FIELD)
+        booking_method = booking_method_from_raw(booking_raw)
 
         history = fetch_stagehistory(deal_id)
 
-        # ⛔️ Подвійні (site) — повністю ігноруємо
-        if direction_key == "site" and stage_now == "C47:UC_DBKQMB":
+        if not has_real_stage_change_on_day(history, target_day):
+            ignored_no_real_stage_change += 1
             continue
 
-        # ✅ Каблучки ЦА Ближчим часом (65) — Взято + Дозвон
-        if cat_now == CAT_RINGS_TO_OTHER:
-            add_levels(total_day, {1, 2})
+        base_levels, base_reason, last_before_date, _ = levels_for_base_report(direction_key, history, target_day)
+        is_base = (base_reason == "BASE_OK" and bool(base_levels))
+
+        if direction_key == "instagram":
+            bucket = bucket_from_source_instagram(source_id, term_text, is_base)
+            insta_term = instagram_term_segment(term_text) if bucket == "Інстаграм" else ""
+            category_label = f"Інстаграм {insta_term}" if (bucket == "Інстаграм" and insta_term) else bucket
+        else:
+            bucket = bucket_from_source_site(source_id, is_base)
+            insta_term = ""
+            category_label = bucket
+
+        # ---------- BASE ----------
+        if is_base:
+            add_levels(total_base, base_levels)
+            if 5 in base_levels:
+                add_booking(total_base, booking_method)
+
+            base_counted_to = "БАЗА: " + ", ".join(LEVEL_NAMES[l] for l in sorted(base_levels))
+            base_reason_text = f"Оживлення після паузи > {BASE_INACTIVITY_DAYS} днів (останній рух: {last_before_date})"
 
             rows.append({
                 "Угода №": deal_id,
                 "Номер телефона": phone,
                 "Назва картки": title,
                 "Поточний статус": f"{cat_now}:{stage_now}",
+                "Джерело (ID)": source_id,
                 "Джерело": source_name,
-                "Категорія": "Передано в каблучки",
-                "Результат": "ДЕНЬ: Взято, Дозвон",
-                "Причина / коментар": "Передано у воронку Каблучки",
+                "Термін": term_text,
+                "Країна номера": region_label,
+                "Категорія": bucket,
+                "Інстаграм сегмент": insta_term,
+                "Спосіб запису": booking_method,
+                "Результат": base_counted_to,
+                "Причина / коментар": base_reason_text,
             })
             continue
 
-        if not has_real_stage_change_on_day(history, target_day):
-            ignored_no_real_stage_change += 1
-            continue
+        # ---------- DAY ----------
+        day_levels, day_reason, _, _ = levels_gained_on_day(direction_key, history, target_day)
 
-        day_levels, _, _, _ = levels_gained_on_day(direction_key, history, target_day)
+        counted_to = ""
+        reason_text = ""
 
         if day_levels:
             add_levels(total_day, day_levels)
+            if 5 in day_levels:
+                add_booking(total_day, booking_method)
+
+            add_levels(day_region_category_source[region_group][category_label][source_name], day_levels)
+            if 5 in day_levels:
+                add_booking(day_region_category_source[region_group][category_label][source_name], booking_method)
+
+            counted_to = "ДЕНЬ: " + ", ".join(LEVEL_NAMES[l] for l in sorted(day_levels))
+        else:
+            skipped[day_reason] += 1
+            reason_text = day_reason
 
         rows.append({
             "Угода №": deal_id,
             "Номер телефона": phone,
             "Назва картки": title,
             "Поточний статус": f"{cat_now}:{stage_now}",
+            "Джерело (ID)": source_id,
             "Джерело": source_name,
-            "Категорія": "",
-            "Результат": ", ".join(LEVEL_NAMES[l] for l in sorted(day_levels)),
-            "Причина / коментар": "",
+            "Термін": term_text,
+            "Країна номера": region_label,
+            "Категорія": bucket,
+            "Інстаграм сегмент": insta_term,
+            "Спосіб запису": booking_method,
+            "Результат": counted_to,
+            "Причина / коментар": reason_text,
         })
 
     meta = {
@@ -768,7 +769,7 @@ def build_report(manager_id: int, target_day: date, direction_key: str):
         "skipped_reasons": dict(skipped),
     }
 
-    return total_day, total_base, day_region_category_source, rows, meta
+    return (total_day, total_base, day_region_category_source, rows, meta)
 
 # ======================================================
 # AUTH
