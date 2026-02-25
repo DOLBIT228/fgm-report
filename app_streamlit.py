@@ -365,22 +365,28 @@ TELEGRAM_SOURCE_NAMES = {
 def source_name_from_id(source_id: str) -> str:
     return SOURCE_ID_TO_NAME.get(str(source_id or "").strip(), "")
 
-def bucket_from_source_instagram(source_id: str, term_text: str, is_base: bool) -> str:
+def bucket_from_source_instagram(source_id: str, term_text: str, is_base: bool):
     if is_base:
         return "База"
+
     sname = source_name_from_id(source_id)
+
+    # ⛔️ САЙТ / ЛЕНДИНГ НЕ МАЮТЬ ПРАВА БУТИ В INSTAGRAM
+    if sname == "Лендинг" or sname in LANDING_SOURCE_NAMES:
+        return None
+
     if sname in INSTAGRAM_SOURCE_NAMES:
         return "Інстаграм"
-    if sname in LANDING_SOURCE_NAMES:
-        return "Лендинг"
+
     if sname == "Чат-бот":
         return "Чат-бот"
-    if sname == "Лендинг":
-        return "Сайт"
+
     if sname == "Квіз обручки":
         return "Лідогенерація"
+
     if sname in TELEGRAM_SOURCE_NAMES:
         return "Телеграм"
+
     return "Інше"
 
 def bucket_from_source_site(source_id: str, is_base: bool) -> str:
@@ -693,6 +699,10 @@ def build_report(manager_id: int, target_day: date, direction_key: str):
 
         if direction_key == "instagram":
             bucket = bucket_from_source_instagram(source_id, term_text, is_base)
+        
+            if bucket is None:
+                continue
+        
             insta_term = instagram_term_segment(term_text) if bucket == "Інстаграм" else ""
             category_label = f"Інстаграм {insta_term}" if (bucket == "Інстаграм" and insta_term) else bucket
         else:
