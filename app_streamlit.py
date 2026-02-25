@@ -560,8 +560,10 @@ def last_stage_key_before_day(history_rows, target_day: date):
             last_key = (int(row.get("CATEGORY_ID", -1)), row.get("STAGE_ID", ""))
     return last_dt, last_key
 
+
 def has_real_stage_change_on_day(history_rows, target_day: date) -> bool:
     _, prev_key = last_stage_key_before_day(history_rows, target_day)
+
     if prev_key is None:
         for row in history_rows:
             dt = parse_dt(row.get("CREATED_TIME"))
@@ -570,16 +572,20 @@ def has_real_stage_change_on_day(history_rows, target_day: date) -> bool:
             if to_local_date(dt) == target_day:
                 return True
         return False
+
     for row in history_rows:
         dt = parse_dt(row.get("CREATED_TIME"))
         if not dt:
             continue
         if to_local_date(dt) != target_day:
             continue
+
         key = (int(row.get("CATEGORY_ID", -1)), row.get("STAGE_ID", ""))
         if key != prev_key:
             return True
+
     return False
+
 
 def last_stage_change_before_day(history_rows, target_day: date):
     last_dt = None
@@ -594,6 +600,7 @@ def last_stage_change_before_day(history_rows, target_day: date):
             if last_dt is None or dt > last_dt:
                 last_dt = dt
     return last_dt
+
 
 def max_levels_before_and_on_day(direction_key: str, history_rows, target_day: date):
     max_before = 0
@@ -624,15 +631,20 @@ def max_levels_before_and_on_day(direction_key: str, history_rows, target_day: d
 
     return had_today, max_before, max_today
 
+
 def levels_gained_on_day(direction_key: str, history_rows, target_day: date):
-    had_today, max_before, max_today = max_levels_before_and_on_day(direction_key, history_rows, target_day)
+    had_today, max_before, max_today = max_levels_before_and_on_day(
+        direction_key, history_rows, target_day
+    )
 
     if not had_today:
         return set(), "Не було змін статусів у цей день", max_before, max_today
+
     if max_today <= max_before:
         return set(), "Статус не піднявся вище (повторна робота)", max_before, max_today
 
     return set(range(max_before + 1, max_today + 1)), "OK", max_before, max_today
+
 
 def levels_for_base_report(direction_key: str, history_rows, target_day: date):
     cutoff = target_day - timedelta(days=BASE_INACTIVITY_DAYS)
@@ -645,43 +657,14 @@ def levels_for_base_report(direction_key: str, history_rows, target_day: date):
     if last_before_date is None or last_before_date > cutoff:
         return set(), "База: не було паузи > 30 днів", last_before_date, 0
 
-    had_today, _, max_today = max_levels_before_and_on_day(direction_key, history_rows, target_day)
+    had_today, _, max_today = max_levels_before_and_on_day(
+        direction_key, history_rows, target_day
+    )
+
     if not had_today or max_today <= 0:
         return set(), "База: у цей день не було статусного руху", last_before_date, max_today
 
     return set(range(1, max_today + 1)), "BASE_OK", last_before_date, max_today
-
-    history = fetch_stagehistory(deal_id)
-    
-    # ⛔️ Site: Подвійні — пропускаємо повністю
-    if direction_key == "site" and stage_now == "C47:UC_DBKQMB":
-        continue
-    
-    # ✅ Каблучки ЦА Ближчим часом (65) — завжди Взято + Дозвон
-    if cat_now == CAT_RINGS_TO_OTHER:
-        add_levels(total_day, {1, 2})
-    
-        rows.append({
-            "Угода №": deal_id,
-            "Номер телефона": phone,
-            "Назва картки": title,
-            "Поточний статус": f"{cat_now}:{stage_now}",
-            "Джерело (ID)": source_id,
-            "Джерело": source_name,
-            "Термін": term_text,
-            "Країна номера": region_label,
-            "Категорія": "Передано в каблучки",
-            "Інстаграм сегмент": "",
-            "Спосіб запису": "",
-            "Результат": "ДЕНЬ: Взято, Дозвон",
-            "Причина / коментар": "Передано у воронку Каблучки",
-        })
-    
-        continue
-
-if not has_real_stage_change_on_day(history, target_day):
-    ignored_no_real_stage_change += 1
-    continue
 
 # ======================================================
 # AUTH
