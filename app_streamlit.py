@@ -14,6 +14,10 @@ except Exception:
 # ======================================================
 st.set_page_config(page_title="FGM Daily Report", page_icon="📊", layout="wide")
 
+DASHBOARD_URL = "http://localhost:8500"
+st.link_button("⬅ Назад до панелі менеджера", DASHBOARD_URL)
+st.divider()
+
 # ======================================================
 # CONFIG (from Streamlit secrets)
 # ======================================================
