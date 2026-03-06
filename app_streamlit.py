@@ -14,7 +14,7 @@ except Exception:
 # ======================================================
 st.set_page_config(page_title="FGM Daily Report", page_icon="📊", layout="wide")
 
-DASHBOARD_URL = "http://localhost:8500"
+DASHBOARD_URL = "https://panel-for-manager-call.streamlit.app/"
 st.link_button("⬅ Назад до панелі менеджера", DASHBOARD_URL)
 st.divider()
 
