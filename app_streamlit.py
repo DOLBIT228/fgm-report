@@ -48,16 +48,38 @@ components.html(
       <button
         type=\"button\"
         onclick=\"window.open({DASHBOARD_URL!r}, '_blank', 'noopener,noreferrer')\"
-        style=\"background:none;border:none;padding:0;color:#1f77b4;cursor:pointer;text-decoration:underline;font:inherit;\"
+        style=\"
+          background:#111827;
+          color:#f3f4f6;
+          border:1px solid #374151;
+          border-radius:16px;
+          padding:14px 24px;
+          cursor:pointer;
+          font:600 40px/1.15 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;
+          letter-spacing:0.2px;
+          display:inline-flex;
+          align-items:center;
+          gap:12px;
+          box-shadow:0 2px 0 rgba(255,255,255,0.02) inset;
+          transition:filter .15s ease,border-color .15s ease;
+        \"
+        onmouseover=\"this.style.filter='brightness(1.08)';this.style.borderColor='#4b5563'\"
+        onmouseout=\"this.style.filter='none';this.style.borderColor='#374151'\"
       >
-        ⬅ Назад до панелі менеджера
+        <span aria-hidden=\"true\" style=\"font-size:44px;line-height:1;\">⬅</span>
+        <span>Назад до панелі менеджера</span>
       </button>
       <noscript>
-        <a href=\"{DASHBOARD_URL}\" target=\"_blank\" rel=\"noopener noreferrer\">⬅ Назад до панелі менеджера</a>
+        <a
+          href=\"{DASHBOARD_URL}\"
+          target=\"_blank\"
+          rel=\"noopener noreferrer\"
+          style=\"color:#f3f4f6;background:#111827;border:1px solid #374151;border-radius:16px;padding:14px 24px;text-decoration:none;display:inline-block;font:600 40px/1.15 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;\"
+        >⬅ Назад до панелі менеджера</a>
       </noscript>
     </div>
     """,
-    height=32,
+    height=88,
 )
 st.divider()
 
