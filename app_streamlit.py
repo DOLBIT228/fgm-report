@@ -1,5 +1,6 @@
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 import time
 from datetime import datetime, date, timedelta
 from collections import Counter, defaultdict
@@ -40,12 +41,39 @@ DASHBOARD_URL = canonical_streamlit_url(
     get_secret("DASHBOARD_URL", "https://panel-for-manager-call.streamlit.app/")
 )
 
-# Важливо: target="_top" виводить користувача з iframe/вкладеного контексту,
-# що прибирає циклічні редіректи на legacy *.share.streamlit.io домен.
-st.markdown(
-    f'<a href="{DASHBOARD_URL}" target="_top" rel="noopener noreferrer" '
-    f'style="text-decoration:none;">⬅ Назад до панелі менеджера</a>',
-    unsafe_allow_html=True,
+# Відкриваємо панель у новій вкладці і пробуємо автоматично закрити цю.
+# Якщо автозакриття заблокує браузер, лишається кнопка для ручного переходу.
+components.html(
+    f"""
+    <div style=\"margin: 0 0 .5rem 0;\">
+      <button
+        type=\"button\"
+        onclick=\"openDashboardAndClose()\"
+        style=\"background:none;border:none;padding:0;color:#1f77b4;cursor:pointer;text-decoration:underline;font:inherit;\"
+      >
+        ⬅ Назад до панелі менеджера
+      </button>
+      <noscript>
+        <a href=\"{DASHBOARD_URL}\" target=\"_blank\" rel=\"noopener noreferrer\">⬅ Назад до панелі менеджера</a>
+      </noscript>
+    </div>
+    <script>
+      function openDashboardAndClose() {{
+        const url = {DASHBOARD_URL!r};
+        const panel = window.open(url, '_blank', 'noopener,noreferrer');
+
+        if (panel) {{
+          setTimeout(() => window.close(), 150);
+          setTimeout(() => {{
+            if (!window.closed) window.location.replace(url);
+          }}, 700);
+        }} else {{
+          window.location.replace(url);
+        }}
+      }}
+    </script>
+    """,
+    height=32,
 )
 st.divider()
 
