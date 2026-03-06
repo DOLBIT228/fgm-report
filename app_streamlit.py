@@ -24,13 +24,6 @@ def canonical_streamlit_url(url: str) -> str:
         return ""
     return raw.replace(".share.streamlit.io", ".streamlit.app")
 
-DASHBOARD_URL = canonical_streamlit_url("https://panel-for-manager-call.streamlit.app/")
-st.markdown(
-    f'<a href="{DASHBOARD_URL}" target="_self" style="text-decoration:none;">⬅ Назад до панелі менеджера</a>',
-    unsafe_allow_html=True,
-)
-st.divider()
-
 # ======================================================
 # CONFIG (from Streamlit secrets)
 # ======================================================
@@ -42,6 +35,19 @@ def get_secret(name: str, default=None):
 
 WEBHOOK_URL = get_secret("WEBHOOK_URL", "")
 LOCAL_TZ_NAME = get_secret("LOCAL_TZ_NAME", "Europe/Kyiv")
+
+DASHBOARD_URL = canonical_streamlit_url(
+    get_secret("DASHBOARD_URL", "https://panel-for-manager-call.streamlit.app/")
+)
+
+# Важливо: target="_top" виводить користувача з iframe/вкладеного контексту,
+# що прибирає циклічні редіректи на legacy *.share.streamlit.io домен.
+st.markdown(
+    f'<a href="{DASHBOARD_URL}" target="_top" rel="noopener noreferrer" '
+    f'style="text-decoration:none;">⬅ Назад до панелі менеджера</a>',
+    unsafe_allow_html=True,
+)
+st.divider()
 
 if not WEBHOOK_URL:
     st.error("Не задано WEBHOOK_URL у secrets. Додайте його в Streamlit secrets.")
