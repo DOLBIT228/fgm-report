@@ -41,14 +41,13 @@ DASHBOARD_URL = canonical_streamlit_url(
     get_secret("DASHBOARD_URL", "https://panel-for-manager-call.streamlit.app/")
 )
 
-# Відкриваємо панель у новій вкладці і пробуємо автоматично закрити цю.
-# Якщо автозакриття заблокує браузер, лишається кнопка для ручного переходу.
+# Відкриваємо панель у новій вкладці без спроб закриття поточної сторінки.
 components.html(
     f"""
     <div style=\"margin: 0 0 .5rem 0;\">
       <button
         type=\"button\"
-        onclick=\"openDashboardAndClose()\"
+        onclick=\"window.open({DASHBOARD_URL!r}, '_blank', 'noopener,noreferrer')\"
         style=\"background:none;border:none;padding:0;color:#1f77b4;cursor:pointer;text-decoration:underline;font:inherit;\"
       >
         ⬅ Назад до панелі менеджера
@@ -57,21 +56,6 @@ components.html(
         <a href=\"{DASHBOARD_URL}\" target=\"_blank\" rel=\"noopener noreferrer\">⬅ Назад до панелі менеджера</a>
       </noscript>
     </div>
-    <script>
-      function openDashboardAndClose() {{
-        const url = {DASHBOARD_URL!r};
-        const panel = window.open(url, '_blank', 'noopener,noreferrer');
-
-        if (panel) {{
-          setTimeout(() => window.close(), 150);
-          setTimeout(() => {{
-            if (!window.closed) window.location.replace(url);
-          }}, 700);
-        }} else {{
-          window.location.replace(url);
-        }}
-      }}
-    </script>
     """,
     height=32,
 )
