@@ -14,7 +14,17 @@ except Exception:
 # ======================================================
 st.set_page_config(page_title="FGM Daily Report", page_icon="📊", layout="wide")
 
-DASHBOARD_URL = "https://panel-for-manager-call.streamlit.app/"
+def canonical_streamlit_url(url: str) -> str:
+    """
+    Streamlit migrated hosted apps from *.share.streamlit.io to *.streamlit.app.
+    If a legacy URL leaks into config/browser history, it can trigger redirect loops.
+    """
+    raw = (url or "").strip()
+    if not raw:
+        return ""
+    return raw.replace(".share.streamlit.io", ".streamlit.app")
+
+DASHBOARD_URL = canonical_streamlit_url("https://panel-for-manager-call.streamlit.app/")
 st.markdown(
     f'<a href="{DASHBOARD_URL}" target="_self" style="text-decoration:none;">⬅ Назад до панелі менеджера</a>',
     unsafe_allow_html=True,
