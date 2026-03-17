@@ -856,6 +856,49 @@ def grouped_region_table(region_data: dict):
             })
     return out
 
+def render_grouped_region_table(region_data: dict):
+    rows = grouped_region_table(region_data)
+    if not rows:
+        st.info("Немає даних за обраний день.")
+        return
+
+    headers = [
+        "Категорія", "Джерело", "Взято", "Дозвон", "ЦА",
+        "Зацікавлені", "Запис", "В дзвінку", "В повідомленнях"
+    ]
+
+    html = [
+        "<table style='width:100%; border-collapse:collapse;'>",
+        "<thead><tr>",
+    ]
+    for h in headers:
+        html.append(
+            f"<th style='border:1px solid #ddd; padding:8px; text-align:left; background:#f4f6f8;'>{h}</th>"
+        )
+    html.append("</tr></thead><tbody>")
+
+    for r in rows:
+        is_category_total = r.get("Джерело") == "Разом по категорії"
+        html.append("<tr>")
+
+        if is_category_total:
+            html.append(
+                "<td colspan='2' style='border:1px solid #ddd; padding:8px; font-weight:600; background:#fafafa;'>"
+                "Разом по категорії"
+                "</td>"
+            )
+        else:
+            html.append(f"<td style='border:1px solid #ddd; padding:8px;'>{r.get('Категорія', '')}</td>")
+            html.append(f"<td style='border:1px solid #ddd; padding:8px;'>{r.get('Джерело', '')}</td>")
+
+        for key in ["Взято", "Дозвон", "ЦА", "Зацікавлені", "Запис", "В дзвінку", "В повідомленнях"]:
+            html.append(f"<td style='border:1px solid #ddd; padding:8px;'>{r.get(key, 0)}</td>")
+
+        html.append("</tr>")
+
+    html.append("</tbody></table>")
+    st.markdown("".join(html), unsafe_allow_html=True)
+
 # ======================================================
 # UI
 # ======================================================
@@ -928,11 +971,11 @@ st.divider()
 # --------------------------------------------------
 st.subheader("🇺🇦 Україна")
 ua_data = day_region_category_source.get("Україна", {})
-st.dataframe(grouped_region_table(ua_data), use_container_width=True)
+render_grouped_region_table(ua_data)
 
 st.subheader("🌍 Закордон")
 foreign_data = day_region_category_source.get("Закордон", {})
-st.dataframe(grouped_region_table(foreign_data), use_container_width=True)
+render_grouped_region_table(foreign_data)
 
 st.divider()
 
