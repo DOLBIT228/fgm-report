@@ -873,7 +873,7 @@ def render_grouped_region_table(region_data: dict):
     ]
     for h in headers:
         html.append(
-            f"<th style='border:1px solid #ddd; padding:8px; text-align:left; background:#f4f6f8;'>{h}</th>"
+            f"<th style='border:1px solid #ddd; padding:8px; text-align:left;'>{h}</th>"
         )
     html.append("</tr></thead><tbody>")
 
@@ -883,7 +883,7 @@ def render_grouped_region_table(region_data: dict):
 
         if is_category_total:
             html.append(
-                "<td colspan='2' style='border:1px solid #ddd; padding:8px; font-weight:600; background:#fafafa;'>"
+                "<td colspan='2' style='border:1px solid #ddd; padding:8px; font-weight:600;'>"
                 "Разом по категорії"
                 "</td>"
             )
