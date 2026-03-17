@@ -2,7 +2,7 @@ import requests
 import streamlit as st
 import streamlit.components.v1 as components
 import time
-from datetime import datetime, date, timedelta
+from datetime import datetime, date
 from collections import Counter, defaultdict
 
 try:
@@ -63,9 +63,7 @@ CAT_RINGS_TO_OTHER = 65  # Каблучки ЦА Ближчим часом
 
 ALL_CATEGORIES = [CAT_CRM_FGM, CAT_SITE, CAT_ONLINE, CAT_OFFLINE, CAT_CHAT_SALES, CAT_VG, CAT_RINGS_TO_OTHER]
 
-APPOINTMENT_CATEGORIES = {CAT_ONLINE, CAT_OFFLINE, CAT_CHAT_SALES, CAT_VG, CAT_RINGS_TO_OTHER}
-
-BASE_INACTIVITY_DAYS = 30
+APPOINTMENT_CATEGORIES = {CAT_ONLINE, CAT_OFFLINE, CAT_VG, CAT_RINGS_TO_OTHER}
 
 TERM_FIELD = "UF_CRM_1749123119"              # "Термін" (list)
 PHONE_REGION_FIELD = "UF_CRM_1765791110365"   # "Номер країни" (list)
@@ -265,6 +263,9 @@ def level_from_stage(direction_key: str, category_id: int, stage_id: str) -> int
             return 2
         return CRM_STAGE_TO_LEVEL.get(stage_id, 0)
 
+    if category_id == CAT_CHAT_SALES:
+        return 4
+
     if category_id in APPOINTMENT_CATEGORIES:
         return 5
 
@@ -380,9 +381,7 @@ TELEGRAM_SOURCE_NAMES = {
 def source_name_from_id(source_id: str) -> str:
     return SOURCE_ID_TO_NAME.get(str(source_id or "").strip(), "")
 
-def bucket_from_source_instagram(source_id: str, term_text: str, is_base: bool) -> str:
-    if is_base:
-        return "База"
+def bucket_from_source_instagram(source_id: str, term_text: str) -> str:
     sname = source_name_from_id(source_id)
     if sname == "Лендинг" or sname in LANDING_SOURCE_NAMES:
         return None
@@ -396,9 +395,7 @@ def bucket_from_source_instagram(source_id: str, term_text: str, is_base: bool) 
         return "Телеграм"
     return "Інше"
 
-def bucket_from_source_site(source_id: str, is_base: bool) -> str:
-    if is_base:
-        return "База"
+def bucket_from_source_site(source_id: str) -> str:
     sname = source_name_from_id(source_id)
     # ✅ Сайт: "Лендинг" (джерело 24) -> bucket "Сайт"
     if sname == "Лендинг":
@@ -648,23 +645,6 @@ def moved_to_category_on_day(history_rows, target_day: date, category_id: int) -
 
     return False
 
-def levels_for_base_report(direction_key: str, history_rows, target_day: date):
-    cutoff = target_day - timedelta(days=BASE_INACTIVITY_DAYS)
-
-    last_before = last_stage_change_before_day(history_rows, target_day)
-    if not last_before:
-        return set(), "База: немає історії до цього дня", None, 0
-
-    last_before_date = to_local_date(last_before)
-    if last_before_date is None or last_before_date > cutoff:
-        return set(), "База: не було паузи > 30 днів", last_before_date, 0
-
-    had_today, _, max_today = max_levels_before_and_on_day(direction_key, history_rows, target_day)
-    if not had_today or max_today <= 0:
-        return set(), "База: у цей день не було статусного руху", last_before_date, max_today
-
-    return set(range(1, max_today + 1)), "BASE_OK", last_before_date, max_today
-
 # ======================================================
 # REPORT
 # ======================================================
@@ -684,8 +664,6 @@ def build_report(manager_id: int, target_day: date, direction_key: str):
     term_enum_map = fetch_deal_userfield_enum_map(TERM_FIELD)
 
     total_day = empty_counts()
-    total_base = empty_counts()
-
     # region -> category_label -> source_name -> counts
     day_region_category_source = defaultdict(lambda: defaultdict(lambda: defaultdict(empty_counts)))
 
@@ -718,9 +696,9 @@ def build_report(manager_id: int, target_day: date, direction_key: str):
             continue
 
         if direction_key == "instagram":
-            preview_bucket = bucket_from_source_instagram(source_id, term_text, is_base=False)
+            preview_bucket = bucket_from_source_instagram(source_id, term_text)
         else:
-            preview_bucket = bucket_from_source_site(source_id, is_base=False)
+            preview_bucket = bucket_from_source_site(source_id)
 
         history = fetch_stagehistory(deal_id)
         moved_to_rings_today = moved_to_category_on_day(history, target_day, CAT_RINGS_TO_OTHER)
@@ -758,45 +736,16 @@ def build_report(manager_id: int, target_day: date, direction_key: str):
             ignored_no_real_stage_change += 1
             continue
 
-        base_levels, base_reason, last_before_date, _ = levels_for_base_report(direction_key, history, target_day)
-        is_base = (base_reason == "BASE_OK" and bool(base_levels))
-
         if direction_key == "instagram":
-            bucket = bucket_from_source_instagram(source_id, term_text, is_base)
+            bucket = bucket_from_source_instagram(source_id, term_text)
             insta_term = instagram_term_segment(term_text) if bucket == "Інстаграм" else ""
             category_label = f"Інстаграм {insta_term}" if (bucket == "Інстаграм" and insta_term) else bucket
         else:
-            bucket = bucket_from_source_site(source_id, is_base)
+            bucket = bucket_from_source_site(source_id)
             insta_term = ""
             category_label = bucket
 
         if bucket is None:
-            continue
-
-        # ---------- BASE ----------
-        if is_base:
-            add_levels(total_base, base_levels)
-            if 5 in base_levels:
-                add_booking(total_base, booking_method)
-
-            base_counted_to = "БАЗА: " + ", ".join(LEVEL_NAMES[l] for l in sorted(base_levels))
-            base_reason_text = f"Оживлення після паузи > {BASE_INACTIVITY_DAYS} днів (останній рух: {last_before_date})"
-
-            rows.append({
-                "Угода №": deal_id,
-                "Номер телефона": phone,
-                "Назва картки": title,
-                "Поточний статус": f"{cat_now}:{stage_now}",
-                "Джерело (ID)": source_id,
-                "Джерело": source_name,
-                "Термін": term_text,
-                "Країна номера": region_label,
-                "Категорія": bucket,
-                "Інстаграм сегмент": insta_term,
-                "Спосіб запису": booking_method,
-                "Результат": base_counted_to,
-                "Причина / коментар": base_reason_text,
-            })
             continue
 
         # ---------- DAY ----------
@@ -842,7 +791,7 @@ def build_report(manager_id: int, target_day: date, direction_key: str):
         "skipped_reasons": dict(skipped),
     }
 
-    return (total_day, total_base, day_region_category_source, rows, meta)
+    return (total_day, day_region_category_source, rows, meta)
 
 # ======================================================
 # AUTH
@@ -874,9 +823,12 @@ def grouped_region_table(region_data: dict):
     out = []
     for category_label in sorted(region_data.keys(), key=lambda x: str(x)):
         sources = region_data.get(category_label, {})
+        category_totals = empty_counts()
         first = True
         for source_name in sorted(sources.keys(), key=lambda x: str(x)):
             counts = sources[source_name]
+            for key in category_totals:
+                category_totals[key] += counts.get(key, 0)
             out.append({
                 "Категорія": category_label if first else "",
                 "Джерело": source_name,
@@ -889,6 +841,19 @@ def grouped_region_table(region_data: dict):
                 "В повідомленнях": counts.get("В повідомленнях", 0),
             })
             first = False
+
+        if sources:
+            out.append({
+                "Категорія": "",
+                "Джерело": "Разом по категорії",
+                "Взято": category_totals.get("Взято", 0),
+                "Дозвон": category_totals.get("Дозвон", 0),
+                "ЦА": category_totals.get("ЦА", 0),
+                "Зацікавлені": category_totals.get("Зацікавлені", 0),
+                "Запис": category_totals.get("Запис", 0),
+                "В дзвінку": category_totals.get("В дзвінку", 0),
+                "В повідомленнях": category_totals.get("В повідомленнях", 0),
+            })
     return out
 
 # ======================================================
@@ -917,7 +882,7 @@ with cols[2]:
         index=0
     )
 with cols[3]:
-    st.caption("Звіт рахує лише реальні зміни статусів. База — тільки після паузи > 30 днів.")
+    st.caption("Звіт рахує лише реальні зміни статусів.")
 
 direction_key = "instagram" if direction_ui.startswith("Інстаграм") else "site"
 
@@ -937,7 +902,7 @@ if st.session_state.get("report_key") != report_key or "report" not in st.sessio
     st.info("Натисніть «Сформувати звіт», щоб завантажити дані.")
     st.stop()
 
-(total_day, total_base, day_region_category_source, rows, meta) = st.session_state["report"]
+(total_day, day_region_category_source, rows, meta) = st.session_state["report"]
 
 elapsed = st.session_state.get("report_elapsed")
 if elapsed is not None:
@@ -955,16 +920,6 @@ c[3].metric("Зацікавлені", total_day["Зацікавлені"])
 c[4].metric("Запис", total_day["Запис"])
 c[5].metric("В дзвінку", total_day["В дзвінку"])
 c[6].metric("В повідомленнях", total_day["В повідомленнях"])
-
-st.subheader(f"🧱 Підсумок БАЗА (пауза > {BASE_INACTIVITY_DAYS} днів)")
-b = st.columns(7)
-b[0].metric("Взято", total_base["Взято"])
-b[1].metric("Дозвон", total_base["Дозвон"])
-b[2].metric("ЦА", total_base["ЦА"])
-b[3].metric("Зацікавлені", total_base["Зацікавлені"])
-b[4].metric("Запис", total_base["Запис"])
-b[5].metric("В дзвінку", total_base["В дзвінку"])
-b[6].metric("В повідомленнях", total_base["В повідомленнях"])
 
 st.divider()
 
