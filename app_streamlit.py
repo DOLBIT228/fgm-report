@@ -824,12 +824,14 @@ def grouped_region_table(region_data: dict):
     for category_label in sorted(region_data.keys(), key=lambda x: str(x)):
         sources = region_data.get(category_label, {})
         category_totals = empty_counts()
+        first = True
         for source_name in sorted(sources.keys(), key=lambda x: str(x)):
             counts = sources[source_name]
             for key in category_totals:
                 category_totals[key] += counts.get(key, 0)
             out.append({
-                "Джерело": f"{category_label} — {source_name}",
+                "Категорія": category_label if first else "",
+                "Джерело": source_name,
                 "Взято": counts.get("Взято", 0),
                 "Дозвон": counts.get("Дозвон", 0),
                 "ЦА": counts.get("ЦА", 0),
@@ -838,10 +840,12 @@ def grouped_region_table(region_data: dict):
                 "В дзвінку": counts.get("В дзвінку", 0),
                 "В повідомленнях": counts.get("В повідомленнях", 0),
             })
+            first = False
 
         if sources:
             out.append({
-                "Джерело": f"{category_label} — Разом по категорії",
+                "Категорія": "",
+                "Джерело": "Разом по категорії",
                 "Взято": category_totals.get("Взято", 0),
                 "Дозвон": category_totals.get("Дозвон", 0),
                 "ЦА": category_totals.get("ЦА", 0),
