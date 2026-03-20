@@ -60,8 +60,9 @@ CAT_OFFLINE = 63
 CAT_CHAT_SALES = 57
 CAT_VG = 41
 CAT_RINGS_TO_OTHER = 65  # Каблучки ЦА Ближчим часом
+CAT_BASE = 35            # База
 
-ALL_CATEGORIES = [CAT_CRM_FGM, CAT_SITE, CAT_ONLINE, CAT_OFFLINE, CAT_CHAT_SALES, CAT_VG, CAT_RINGS_TO_OTHER]
+ALL_CATEGORIES = [CAT_CRM_FGM, CAT_SITE, CAT_ONLINE, CAT_OFFLINE, CAT_CHAT_SALES, CAT_VG, CAT_RINGS_TO_OTHER, CAT_BASE]
 
 APPOINTMENT_CATEGORIES = {CAT_ONLINE, CAT_OFFLINE, CAT_VG, CAT_RINGS_TO_OTHER}
 
@@ -160,6 +161,7 @@ def empty_counts():
         "Запис": 0,
         "В дзвінку": 0,
         "В повідомленнях": 0,
+        "База": 0,
     }
 
 def add_levels(counter: dict, levels: set[int]):
@@ -701,7 +703,34 @@ def build_report(manager_id: int, target_day: date, direction_key: str):
             preview_bucket = bucket_from_source_site(source_id)
 
         history = fetch_stagehistory(deal_id)
+        moved_to_base_today = moved_to_category_on_day(history, target_day, CAT_BASE)
         moved_to_rings_today = moved_to_category_on_day(history, target_day, CAT_RINGS_TO_OTHER)
+
+        if moved_to_base_today:
+            _, _, max_today = max_levels_before_and_on_day(direction_key, history, target_day)
+            base_max_level = max(3, min(max_today, 4))  # мінімум до ЦА, максимум до Зацікавлені
+            base_levels = set(range(1, base_max_level + 1))
+
+            add_levels(total_day, base_levels)
+            add_booking(total_day, booking_method)
+            total_day["База"] += 1
+
+            rows.append({
+                "Угода №": deal_id,
+                "Номер телефона": phone,
+                "Назва картки": title,
+                "Поточний статус": f"{cat_now}:{stage_now}",
+                "Джерело (ID)": source_id,
+                "Джерело": source_name,
+                "Термін": term_text,
+                "Країна номера": region_label,
+                "Категорія": "База",
+                "Інстаграм сегмент": "",
+                "Спосіб запису": booking_method,
+                "Результат": "ДЕНЬ: " + ", ".join(LEVEL_NAMES[l] for l in sorted(base_levels)),
+                "Причина / коментар": "CATEGORY 35: перехід у воронку База (без розбивки по джерелах та регіонах)",
+            })
+            continue
 
         if moved_to_rings_today:
             category_label = preview_bucket or "Інше"
@@ -727,6 +756,10 @@ def build_report(manager_id: int, target_day: date, direction_key: str):
 
         if cat_now == CAT_RINGS_TO_OTHER:
             skipped["CATEGORY 65: не було переходу в цю воронку у цей день"] += 1
+            continue
+
+        if cat_now == CAT_BASE:
+            skipped["CATEGORY 35: не було переходу в цю воронку у цей день"] += 1
             continue
 
         if preview_bucket is None:
@@ -955,7 +988,7 @@ if elapsed is not None:
 # TOP TOTALS
 # --------------------------------------------------
 st.subheader("✅ Підсумок за день")
-c = st.columns(7)
+c = st.columns(8)
 c[0].metric("Взято", total_day["Взято"])
 c[1].metric("Дозвон", total_day["Дозвон"])
 c[2].metric("ЦА", total_day["ЦА"])
@@ -963,6 +996,7 @@ c[3].metric("Зацікавлені", total_day["Зацікавлені"])
 c[4].metric("Запис", total_day["Запис"])
 c[5].metric("В дзвінку", total_day["В дзвінку"])
 c[6].metric("В повідомленнях", total_day["В повідомленнях"])
+c[7].metric("База", total_day["База"])
 
 st.divider()
 
