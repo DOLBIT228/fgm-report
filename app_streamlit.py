@@ -80,6 +80,8 @@ BOOKING_METHOD_ENUM = {
     "47065": "Повідомлення",
 }
 
+BASE_SOURCE_ID = "35"
+
 # ======================================================
 # HELPERS
 # ======================================================
@@ -160,6 +162,7 @@ def empty_counts():
         "Запис": 0,
         "В дзвінку": 0,
         "В повідомленнях": 0,
+        "База": 0,
     }
 
 def add_levels(counter: dict, levels: set[int]):
@@ -736,6 +739,35 @@ def build_report(manager_id: int, target_day: date, direction_key: str):
             ignored_no_real_stage_change += 1
             continue
 
+        # SOURCE 35 ("Лендинг 2 за 1 ОФФЕР"):
+        # рахуємо як "База" (тільки у Підсумку за день + Деталізації),
+        # без розбивки по джерелах/Україна-Закордон.
+        if source_id == BASE_SOURCE_ID:
+            _, _, max_today = max_levels_before_and_on_day(direction_key, history, target_day)
+            base_max_level = max(3, min(max_today, 4))  # мінімум до ЦА, максимум до Зацікавлені
+            base_levels = set(range(1, base_max_level + 1))
+
+            add_levels(total_day, base_levels)
+            add_booking(total_day, booking_method)
+            total_day["База"] += 1
+
+            rows.append({
+                "Угода №": deal_id,
+                "Номер телефона": phone,
+                "Назва картки": title,
+                "Поточний статус": f"{cat_now}:{stage_now}",
+                "Джерело (ID)": source_id,
+                "Джерело": source_name,
+                "Термін": term_text,
+                "Країна номера": region_label,
+                "Категорія": "База",
+                "Інстаграм сегмент": "",
+                "Спосіб запису": booking_method,
+                "Результат": "ДЕНЬ: " + ", ".join(LEVEL_NAMES[l] for l in sorted(base_levels)),
+                "Причина / коментар": "SOURCE 35: рахуємо як База (без розбивки по джерелах та регіонах)",
+            })
+            continue
+
         if direction_key == "instagram":
             bucket = bucket_from_source_instagram(source_id, term_text)
             insta_term = instagram_term_segment(term_text) if bucket == "Інстаграм" else ""
@@ -955,7 +987,7 @@ if elapsed is not None:
 # TOP TOTALS
 # --------------------------------------------------
 st.subheader("✅ Підсумок за день")
-c = st.columns(7)
+c = st.columns(8)
 c[0].metric("Взято", total_day["Взято"])
 c[1].metric("Дозвон", total_day["Дозвон"])
 c[2].metric("ЦА", total_day["ЦА"])
@@ -963,6 +995,7 @@ c[3].metric("Зацікавлені", total_day["Зацікавлені"])
 c[4].metric("Запис", total_day["Запис"])
 c[5].metric("В дзвінку", total_day["В дзвінку"])
 c[6].metric("В повідомленнях", total_day["В повідомленнях"])
+c[7].metric("База", total_day["База"])
 
 st.divider()
 
