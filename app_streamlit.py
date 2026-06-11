@@ -461,6 +461,11 @@ def fetch_all_deals(manager_id: int, categories: list[int]):
         "select[]": [
             "ID", "TITLE", "STAGE_ID", "CATEGORY_ID", "DATE_MODIFY",
             "CONTACT_ID", "SOURCE_ID",
+            "UTM_SOURCE",
+            "UTM_MEDIUM",
+            "UTM_CAMPAIGN",
+            "UTM_CONTENT",
+            "UTM_TERM",
             TERM_FIELD, PHONE_REGION_FIELD, BOOKING_METHOD_FIELD,
         ],
         "start": 0
@@ -687,6 +692,15 @@ def build_report(manager_id: int, target_day: date, direction_key: str):
 
         source_id = str(d.get("SOURCE_ID") or "").strip()
         source_name = source_name_from_id(source_id) or source_id or "Без джерела"
+
+        utm_campaign = str(d.get("UTM_CAMPAIGN") or "").strip().lower()
+
+        # Джерело 24 (Лендинг): органіка або реклама
+        if source_id == "24":
+            if utm_campaign == "bio":
+                source_name = "Лендинг (органіка)"
+            else:
+                source_name = "Лендинг (реклама)"
 
         term_raw = d.get(TERM_FIELD, "")
         term_text = term_text_from_raw(term_raw, term_enum_map)
