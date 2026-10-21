@@ -82,6 +82,7 @@ BOOKING_METHOD_ENUM = {
 }
 
 BASE_SOURCE_ID = "35"
+CATALOG_SITE_SOURCE_ID = "UC_CATALOG"  # Каталог (Сайт)
 
 # ======================================================
 # HELPERS
@@ -346,6 +347,7 @@ SOURCE_ID_TO_NAME = {
     "UC_MW9CGP": "Телеграм 2=1 ЧП 2025",
     "UC_CP8H2V": "Телеграм розтермінування ЧП 2025",
     "UC_J51RMG": "Телеграм 1 грам",
+    CATALOG_SITE_SOURCE_ID: "Каталог (Сайт)",
 }
 
 INSTAGRAM_SOURCE_NAMES = {
@@ -406,6 +408,9 @@ def bucket_from_source_site(source_id: str) -> str:
     # ✅ Сайт: "Лендинг" (джерело 24) -> bucket "Сайт"
     if sname == "Лендинг":
         return "Сайт"
+    # ✅ "Каталог (Сайт)" -> окремий bucket "Каталог"
+    if sname == "Каталог (Сайт)":
+        return "Каталог"
     # ✅ всі інші "лендинги" -> bucket "Лендинг"
     if sname in LANDING_SOURCE_NAMES:
         return "Лендинг"
