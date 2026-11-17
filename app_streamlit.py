@@ -2,7 +2,7 @@ import requests
 import streamlit as st
 import streamlit.components.v1 as components
 import time
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from collections import Counter, defaultdict
 
 try:
@@ -117,9 +117,12 @@ def to_local_date(dt: datetime):
         return dt.date()
     return dt.astimezone(ZoneInfo(LOCAL_TZ_NAME)).date()
 
-def is_modified_on(date_modify: str, target_day: date) -> bool:
-    dt = parse_dt(date_modify)
-    return dt and to_local_date(dt) == target_day
+def local_day_bounds(target_day: date) -> tuple[str, str]:
+    # Межі доби в локальному часовому поясі (ISO з офсетом) для фільтрів Bitrix
+    tz = ZoneInfo(LOCAL_TZ_NAME) if ZoneInfo is not None else None
+    start = datetime.combine(target_day, datetime.min.time(), tzinfo=tz)
+    end = datetime.combine(target_day + timedelta(days=1), datetime.min.time(), tzinfo=tz)
+    return start.isoformat(), end.isoformat()
 
 def phone_region_group_from_raw(raw) -> str:
     # Закордон -> "Закордон", все інше -> "Україна"
@@ -391,7 +394,8 @@ def source_name_from_id(source_id: str) -> str:
 
 def bucket_from_source_instagram(source_id: str, term_text: str) -> str:
     sname = source_name_from_id(source_id)
-    if sname == "Лендинг" or sname in LANDING_SOURCE_NAMES:
+    # Джерела сайту рахуються тільки в напрямку "Сайт"
+    if sname in ("Лендинг", "Каталог (Сайт)") or sname in LANDING_SOURCE_NAMES:
         return None
     if sname in INSTAGRAM_SOURCE_NAMES:
         return "Інстаграм"
@@ -459,32 +463,56 @@ def term_text_from_raw(raw, enum_map: dict) -> str:
 # ======================================================
 # FETCH: DEALS + STAGEHISTORY
 # ======================================================
-def fetch_all_deals(manager_id: int, categories: list[int]):
+def fetch_deal_ids_with_stage_change_on_day(target_day: date, categories: list[int]) -> list[int]:
+    # Беремо угоди за історією стадій, а не за DATE_MODIFY:
+    # DATE_MODIFY — дата ОСТАННЬОЇ зміни картки, тож будь-яка пізніша правка
+    # викидала угоду зі звіту за минулий день.
+    day_start, day_end = local_day_bounds(target_day)
     params = {
-        "filter[ASSIGNED_BY_ID]": manager_id,
-        "filter[CATEGORY_ID][]": categories,
-        "select[]": [
-            "ID", "TITLE", "STAGE_ID", "CATEGORY_ID", "DATE_MODIFY",
-            "CONTACT_ID", "SOURCE_ID",
-            "UTM_SOURCE",
-            "UTM_MEDIUM",
-            "UTM_CAMPAIGN",
-            "UTM_CONTENT",
-            "UTM_TERM",
-            TERM_FIELD, PHONE_REGION_FIELD, BOOKING_METHOD_FIELD,
-        ],
+        "entityTypeId": 2,
+        "filter[>=CREATED_TIME]": day_start,
+        "filter[<CREATED_TIME]": day_end,
+        "select[]": ["OWNER_ID", "CATEGORY_ID"],
         "start": 0
     }
-    deals = []
+    wanted = set(categories)
+    ids = set()
     while True:
-        data = b24_get("crm.deal.list", params)
-        batch = data.get("result", [])
-        if not batch:
-            break
-        deals.extend(batch)
+        data = b24_get("crm.stagehistory.list", params)
+        items = (data.get("result") or {}).get("items", [])
+        for it in items if isinstance(items, list) else []:
+            if int(it.get("CATEGORY_ID", -1)) in wanted:
+                ids.add(int(it.get("OWNER_ID")))
         if data.get("next") is None:
             break
         params["start"] = data["next"]
+    return sorted(ids)
+
+def fetch_deals_by_ids(manager_id: int, deal_ids: list[int]):
+    deals = []
+    chunk_size = 50
+    for i in range(0, len(deal_ids), chunk_size):
+        params = {
+            "filter[ID][]": deal_ids[i:i + chunk_size],
+            "filter[ASSIGNED_BY_ID]": manager_id,
+            "select[]": [
+                "ID", "TITLE", "STAGE_ID", "CATEGORY_ID", "DATE_MODIFY",
+                "CONTACT_ID", "SOURCE_ID",
+                "UTM_SOURCE",
+                "UTM_MEDIUM",
+                "UTM_CAMPAIGN",
+                "UTM_CONTENT",
+                "UTM_TERM",
+                TERM_FIELD, PHONE_REGION_FIELD, BOOKING_METHOD_FIELD,
+            ],
+            "start": 0
+        }
+        while True:
+            data = b24_get("crm.deal.list", params)
+            deals.extend(data.get("result", []))
+            if data.get("next") is None:
+                break
+            params["start"] = data["next"]
     return deals
 
 def fetch_stagehistory(deal_id: int, limit: int = 2000):
@@ -667,8 +695,8 @@ def moved_to_category_on_day(history_rows, target_day: date, category_id: int) -
 def build_report(manager_id: int, target_day: date, direction_key: str):
     categories = ALL_CATEGORIES
 
-    all_deals = fetch_all_deals(manager_id, categories)
-    deals_day = [d for d in all_deals if is_modified_on(d.get("DATE_MODIFY", ""), target_day)]
+    deal_ids = fetch_deal_ids_with_stage_change_on_day(target_day, categories)
+    deals_day = fetch_deals_by_ids(manager_id, deal_ids)
 
     contact_ids = []
     for d in deals_day:
@@ -725,6 +753,11 @@ def build_report(manager_id: int, target_day: date, direction_key: str):
         else:
             preview_bucket = bucket_from_source_site(source_id)
 
+        # Угода з джерелом іншого напрямку не рахується в цьому звіті
+        # (у т.ч. переходи в Базу 35 і воронку 65 — інакше вони йшли в обидва звіти)
+        if preview_bucket is None:
+            continue
+
         history = fetch_stagehistory(deal_id)
         moved_to_base_today = moved_to_category_on_day(history, target_day, CAT_BASE)
         moved_to_rings_today = moved_to_category_on_day(history, target_day, CAT_RINGS_TO_OTHER)
@@ -735,7 +768,7 @@ def build_report(manager_id: int, target_day: date, direction_key: str):
             base_levels = set(range(1, base_max_level + 1))
 
             add_levels(total_day, base_levels)
-            add_booking(total_day, booking_method)
+            # Спосіб запису не рахуємо: База обмежена рівнем "Зацікавлені", Запису тут немає
             total_day["База"] += 1
 
             rows.append({
@@ -756,7 +789,7 @@ def build_report(manager_id: int, target_day: date, direction_key: str):
             continue
 
         if moved_to_rings_today:
-            category_label = preview_bucket or "Інше"
+            category_label = preview_bucket
             add_levels(total_day, {1, 2})
             add_levels(day_region_category_source[region_group][category_label][source_name], {1, 2})
 
@@ -785,9 +818,6 @@ def build_report(manager_id: int, target_day: date, direction_key: str):
             skipped["CATEGORY 35: не було переходу в цю воронку у цей день"] += 1
             continue
 
-        if preview_bucket is None:
-            continue
-
         if not has_real_stage_change_on_day(history, target_day):
             ignored_no_real_stage_change += 1
             continue
@@ -801,7 +831,7 @@ def build_report(manager_id: int, target_day: date, direction_key: str):
             base_levels = set(range(1, base_max_level + 1))
 
             add_levels(total_day, base_levels)
-            add_booking(total_day, booking_method)
+            # Спосіб запису не рахуємо: База обмежена рівнем "Зацікавлені", Запису тут немає
             total_day["База"] += 1
 
             rows.append({
