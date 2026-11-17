@@ -1,3 +1,5 @@
+import hmac
+import html as html_lib
 import requests
 import streamlit as st
 import streamlit.components.v1 as components
@@ -921,7 +923,7 @@ def auth_block():
         if not user:
             st.sidebar.error("Невірний логін або пароль")
             return None
-        if password != user.get("password"):
+        if not hmac.compare_digest(password.encode(), str(user.get("password", "")).encode()):
             st.sidebar.error("Невірний логін або пароль")
             return None
 
@@ -1003,11 +1005,11 @@ def render_grouped_region_table(region_data: dict):
                 "</td>"
             )
         else:
-            html.append(f"<td style='border:1px solid #ddd; padding:8px;'>{r.get('Категорія', '')}</td>")
-            html.append(f"<td style='border:1px solid #ddd; padding:8px;'>{r.get('Джерело', '')}</td>")
+            html.append(f"<td style='border:1px solid #ddd; padding:8px;'>{html_lib.escape(str(r.get('Категорія', '')))}</td>")
+            html.append(f"<td style='border:1px solid #ddd; padding:8px;'>{html_lib.escape(str(r.get('Джерело', '')))}</td>")
 
         for key in ["Взято", "Дозвон", "ЦА", "Зацікавлені", "Запис", "В дзвінку", "В повідомленнях"]:
-            html.append(f"<td style='border:1px solid #ddd; padding:8px;'>{r.get(key, 0)}</td>")
+            html.append(f"<td style='border:1px solid #ddd; padding:8px;'>{html_lib.escape(str(r.get(key, 0)))}</td>")
 
         html.append("</tr>")
 
